@@ -20,5 +20,8 @@ npm run build   # type-check + production build
 ```
 Deploys to GitHub Pages automatically on push to `main`.
 
+## Credits
+Planet & Moon surface imagery: NASA mission mosaics packaged by [Solar System Scope](https://www.solarsystemscope.com/textures/) (CC-BY 4.0). Orbital elements & physical data: NASA/JPL. Star data: ESA Gaia/Hipparcos. Black hole parameters: EHT collaboration.
+
 ## Honesty notes
 Star catalog is curated (~70 real objects), not exhaustive. The Milky Way particle field, cosmic web and belt particles are representative, procedurally placed. Voyager positions are approximate for 2026. Pulsar spins are slowed for visibility. Sizes flagged `SIZE UNCERTAIN` are genuinely debated in the literature.

@@ -30,6 +30,23 @@ function glowTex(): THREE.Texture {
   }, 128, 128);
 }
 
+// Real imagery mosaics (NASA missions, packaged by solarsystemscope.com, CC-BY 4.0).
+// Loaded async; procedural texture shows until then / if offline.
+const REAL_TEX: Record<string, string> = {
+  mercury: '2k_mercury.jpg', venus: '2k_venus_atmosphere.jpg', earth: '2k_earth_daymap.jpg',
+  mars: '2k_mars.jpg', jupiter: '2k_jupiter.jpg', saturn: '2k_saturn.jpg',
+  uranus: '2k_uranus.jpg', neptune: '2k_neptune.jpg', moon: '2k_moon.jpg',
+};
+const texLoader = new THREE.TextureLoader();
+function loadRealTex(file: string, onto: THREE.Material & { map?: THREE.Texture | null }) {
+  texLoader.load(`${import.meta.env.BASE_URL}tex/${file}`, (t) => {
+    t.colorSpace = THREE.SRGBColorSpace;
+    t.anisotropy = 4;
+    onto.map = t;
+    onto.needsUpdate = true;
+  });
+}
+
 let rngState = 12345;
 const rng = () => (rngState = (rngState * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
 
@@ -127,8 +144,15 @@ export function buildBodies(engine: Engine): Map<string, SceneObj> {
         new THREE.MeshStandardMaterial({ map: planetTexture(b), roughness: 0.95 }),
       );
       if (b.ring) {
+        const ringGeo = new THREE.RingGeometry(r * b.ring.inner, r * b.ring.outer, 96);
+        { // radial UVs so a 1-D ring strip texture maps inner->outer
+          const rp = ringGeo.attributes.position, ruv = ringGeo.attributes.uv;
+          const ri = r * b.ring.inner, ro = r * b.ring.outer;
+          for (let i = 0; i < rp.count; i++)
+            ruv.setXY(i, (Math.hypot(rp.getX(i), rp.getY(i)) - ri) / (ro - ri), 0.5);
+        }
         const ring = new THREE.Mesh(
-          new THREE.RingGeometry(r * b.ring.inner, r * b.ring.outer, 96),
+          ringGeo,
           new THREE.MeshBasicMaterial({
             color: b.ring.color, side: THREE.DoubleSide, transparent: true, opacity: 0.55,
             map: canvasTex('ring', (ctx, w, h) => {
@@ -138,8 +162,10 @@ export function buildBodies(engine: Engine): Map<string, SceneObj> {
         );
         ring.rotation.x = Math.PI / 2 - 0.15;
         group.add(ring);
+        if (b.id === 'saturn') loadRealTex('2k_saturn_ring_alpha.png', ring.material as THREE.MeshBasicMaterial);
       }
       group.add(mesh);
+      if (REAL_TEX[b.id]) loadRealTex(REAL_TEX[b.id], mesh.material as THREE.MeshStandardMaterial);
       o.onFrame = (oo, dtSim) => { if (b.rotationHrs) mesh.rotation.y += (dtSim / 3600 / b.rotationHrs) * 2 * Math.PI; };
     } else if (b.kind === 'blackhole') {
       const hole = new THREE.Mesh(new THREE.SphereGeometry(r, 32, 16), new THREE.MeshBasicMaterial({ color: 0x000000 }));
