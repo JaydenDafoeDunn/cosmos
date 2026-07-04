@@ -97,6 +97,7 @@ export class Engine {
   onSelect: (o: SceneObj | null) => void = () => {};
   selected: SceneObj | null = null;
   inflate = 1; // planet size exaggeration (UI toggle; clearly labelled)
+  shake = 0;   // camera shake impulse, decays
   lastFrame = performance.now();
 
   constructor(canvas: HTMLCanvasElement) {
@@ -312,8 +313,13 @@ export class Engine {
       this.travel = null;
     }
 
-    // apply camera orientation (position stays at origin)
-    this.camera.quaternion.copy(q);
+    // apply camera orientation (position stays at origin) + shake
+    if (this.shake > 0.005) {
+      const s = this.shake * 0.012;
+      this.camera.quaternion.setFromEuler(new THREE.Euler(
+        this.pitch + (Math.random() - 0.5) * s, this.yaw + (Math.random() - 0.5) * s, 0, 'YXZ'));
+      this.shake *= Math.exp(-dt * 5);
+    } else this.camera.quaternion.copy(q);
     this.camera.position.set(0, 0, 0);
 
     // position scene objects relative to camera, with compression

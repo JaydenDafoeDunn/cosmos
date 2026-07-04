@@ -8,7 +8,7 @@ import { KidMode } from './kid';
 import { Hands } from './hands';
 import { BlackHoleView } from './blackhole';
 import { Surface } from './surface';
-import { ambient } from './sound';
+import { ambient, engineHum } from './sound';
 
 declare const __BUILD__: string;
 document.getElementById('build')!.textContent = `build ${__BUILD__}`;
@@ -171,6 +171,11 @@ function loop() {
 
   game.update(dt);
   game.startWaveIfNeeded();
+  ui.updateLead();
+
+  // engine hum follows the throttle
+  const flying = ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyE', 'ArrowUp', 'ArrowDown'].some((k) => engine.keys.has(k));
+  engineHum(flying ? (engine.keys.has('ShiftLeft') || engine.keys.has('ShiftRight') ? 1 : 0.55) : engine.travel ? 0.75 : 0);
 
   // black hole lensing overlay (replaces scene render when near a hole)
   bh.update(engine.camPos, engine.quat, holes);

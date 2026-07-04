@@ -97,6 +97,21 @@ body.kid-mode #radar, body.walking #radar, body.walking #gamehud { display: none
   display: flex; gap: 12px; align-items: center; background: rgba(8,12,26,.85);
   border: 1px solid rgba(130,160,220,.35); border-radius: 30px; padding: 8px 18px; }
 
+/* ---------------- combat feedback ---------------- */
+.hitmark { position: fixed; left: 50%; top: 50%; width: 22px; height: 22px; z-index: 22;
+  transform: translate(-50%, -50%) rotate(45deg); opacity: 0; pointer-events: none; transition: opacity .12s; }
+.hitmark::before, .hitmark::after { content: ''; position: absolute; background: #fff; box-shadow: 0 0 6px #7adcff; }
+.hitmark::before { left: 10px; top: 0; width: 2px; height: 22px; }
+.hitmark::after { top: 10px; left: 0; height: 2px; width: 22px; }
+.hitmark.on { opacity: .95; }
+.dmgflash { position: fixed; inset: 0; z-index: 21; pointer-events: none; opacity: 0; transition: opacity .25s;
+  background: radial-gradient(ellipse at center, transparent 55%, rgba(255,40,40,.45)); }
+.dmgflash.on { opacity: 1; }
+.lead { position: fixed; left: 0; top: 0; width: 20px; height: 20px; z-index: 20; display: none;
+  border: 1.5px solid rgba(255,120,90,.9); border-radius: 50%; pointer-events: none;
+  box-shadow: 0 0 8px rgba(255,90,60,.5); }
+.resetsave { margin-top: 8px; font-size: 10.5px; color: #5f6e8a; text-decoration: underline; cursor: pointer; }
+
 /* ---------------- cockpit ---------------- */
 #cockpit { display: none; position: fixed; inset: 0; pointer-events: none; z-index: 8; }
 body.cockpit #cockpit { display: block; }

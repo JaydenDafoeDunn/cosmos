@@ -3,8 +3,9 @@ import * as THREE from 'three';
 import { Engine, SceneObj, V3, vlen, vsub, fmtDist } from './engine';
 import { byId } from './data';
 
-interface Enemy { mesh: THREE.Group; pos: V3; vel: V3; hp: number; fireCd: number; kind: 'drone' | 'fighter'; strafe: number }
-interface Rock { mesh: THREE.Mesh; pos: V3; vel: V3; spin: V3; hp: number; r: number }
+interface Enemy { mesh: THREE.Group; pos: V3; vel: V3; hp: number; fireCd: number; kind: 'drone' | 'fighter'; strafe: number; flash?: number }
+interface Rock { mesh: THREE.Mesh; pos: V3; vel: V3; spin: V3; hp: number; r: number; flash?: number }
+interface Boom { mesh: THREE.Sprite; pos: V3; t: number; size: number }
 interface Bolt { mesh: THREE.Mesh; pos: V3; vel: V3; life: number; hostile: boolean }
 
 export interface Mission {
@@ -45,8 +46,13 @@ export class Game {
   firing = false;
   easy = false; // kid mode: no damage, gentler enemies
   audio: AudioContext | null = null;
+  booms: Boom[] = [];
+  visited = new Set<string>();
+  private ambushT = 120;
   onChange: () => void = () => {};
   onToast: (msg: string, big?: boolean) => void = () => {};
+  onHit: () => void = () => {};    // player landed a shot (hitmarker)
+  onDamage: () => void = () => {}; // player took damage (vignette)
   private enemyProto: THREE.Group;
   private fighterProto: THREE.Group;
 
@@ -67,6 +73,52 @@ export class Game {
     const engineGlow = new THREE.Mesh(new THREE.SphereGeometry(7, 8, 6), new THREE.MeshBasicMaterial({ color: 0xff6633 }));
     engineGlow.position.z = 36;
     this.fighterProto.add(fus, wing, fin, engineGlow);
+    this.load();
+  }
+
+  // ---------- persistence ----------
+  save() {
+    try {
+      localStorage.setItem('cosmos-save', JSON.stringify({
+        score: this.score, levels: this.levels, missionIdx: this.missionIdx,
+        shield: this.shield, visited: [...this.visited],
+      }));
+    } catch {}
+  }
+
+  private load() {
+    try {
+      const s = JSON.parse(localStorage.getItem('cosmos-save') ?? 'null');
+      if (!s) return;
+      this.score = s.score ?? 0;
+      Object.assign(this.levels, s.levels ?? {});
+      this.missionIdx = Math.min(s.missionIdx ?? 0, this.missions.length);
+      this.shield = s.shield ?? 0;
+      (s.visited ?? []).forEach((v: string) => this.visited.add(v));
+      for (let i = 0; i < this.missionIdx; i++) this.missions[i].done = true;
+    } catch {}
+  }
+
+  resetSave() {
+    try { localStorage.removeItem('cosmos-save'); } catch {}
+    location.reload();
+  }
+
+  private boomTex?: THREE.Texture;
+  boom(pos: V3, color: number, size: number) {
+    if (!this.boomTex) {
+      const c = document.createElement('canvas'); c.width = c.height = 64;
+      const g = c.getContext('2d')!;
+      const grad = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+      grad.addColorStop(0, 'rgba(255,255,255,1)'); grad.addColorStop(0.4, 'rgba(255,200,120,0.7)'); grad.addColorStop(1, 'rgba(255,120,40,0)');
+      g.fillStyle = grad; g.fillRect(0, 0, 64, 64);
+      this.boomTex = new THREE.CanvasTexture(c);
+    }
+    const mesh = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: this.boomTex, color, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false,
+    }));
+    this.engine.scene.add(mesh);
+    this.booms.push({ mesh, pos: [...pos] as V3, t: 0, size });
   }
 
   cost(id: string) { return Math.round(UPGRADES.find((u) => u.id === id)!.base * Math.pow(2.1, this.levels[id])); }
@@ -77,6 +129,7 @@ export class Game {
     this.score -= c;
     this.levels[id]++;
     if (id === 'shield') this.shield += 25;
+    this.save();
     this.beep(660, 0.12, 'triangle');
     this.onChange();
     return true;
@@ -147,6 +200,7 @@ export class Game {
     (rk.mesh.geometry as THREE.BufferGeometry).dispose();
     this.rocks.splice(i, 1);
     if (byPlayer) {
+      this.boom(rk.pos, 0xffcc88, rk.r * 4);
       this.score += 25;
       this.beep(200, 0.18, 'sawtooth', 0.06);
       if (rk.r > 55) for (let k = 0; k < 2; k++) // split!
@@ -181,8 +235,8 @@ export class Game {
     this.bolts.push({
       mesh,
       pos: [e.camPos[0] + off.x + dir.x * 60, e.camPos[1] + off.y + dir.y * 60, e.camPos[2] + off.z + dir.z * 60],
-      vel: [dir.x * 6000, dir.y * 6000, dir.z * 6000],
-      life: 1.6, hostile: false,
+      vel: [dir.x * 12000, dir.y * 12000, dir.z * 12000],
+      life: 1.2, hostile: false,
     });
     this.beep(880, 0.07, 'square', 0.04);
   }
@@ -199,10 +253,12 @@ export class Game {
 
   private killEnemy(i: number) {
     const en = this.enemies[i];
+    this.boom(en.pos, en.kind === 'fighter' ? 0xff8844 : 0xff5566, 420);
     this.engine.scene.remove(en.mesh);
     this.enemies.splice(i, 1);
     const pts = en.kind === 'fighter' ? 250 : 100;
     this.score += pts;
+    this.save();
     this.beep(120, 0.3, 'sawtooth', 0.07);
     this.onToast(this.easy ? `⭐ Tagged one! +${pts}` : `+${pts} — ${en.kind} destroyed`);
     if (this.waveLeft > 0) {
@@ -218,6 +274,7 @@ export class Game {
     m.done = true;
     this.score += 250;
     this.missionIdx++;
+    this.save();
     this.beep(523, 0.15, 'triangle', 0.06);
     setTimeout(() => this.beep(784, 0.25, 'triangle', 0.06), 140);
     this.onToast(this.easy ? '🎉 YOU DID IT! +250 points!' : `✅ Mission complete: +250`, true);
@@ -240,13 +297,40 @@ export class Game {
       if (vlen(vsub(t.worldPos, e.camPos)) < near) this.completeMission();
     }
 
-    // landing / collision clamp: never fly inside a body
+    // explosions animate
+    for (let i = this.booms.length - 1; i >= 0; i--) {
+      const bm = this.booms[i];
+      bm.t += dt * 1.8;
+      bm.mesh.position.set(bm.pos[0] - e.camPos[0], bm.pos[1] - e.camPos[1], bm.pos[2] - e.camPos[2]);
+      bm.mesh.scale.setScalar(bm.size * (0.3 + bm.t * 2.2));
+      bm.mesh.material.opacity = Math.max(1 - bm.t, 0);
+      if (bm.t >= 1) { e.scene.remove(bm.mesh); bm.mesh.material.dispose(); this.booms.splice(i, 1); }
+    }
+
+    // ambush pacing: keep space lively between missions (never in kid mode)
+    if (!this.easy && this.enemies.length === 0 && this.waveLeft === 0 && vlen(e.camPos) < 60 * 1.496e8) {
+      this.ambushT -= dt;
+      if (this.ambushT <= 0) {
+        this.ambushT = 100 + Math.random() * 80;
+        this.spawnWave(2 + Math.floor(Math.random() * 3));
+      }
+    }
+
+    // landing / collision clamp + discovery bonus
     let landed: SceneObj | null = null;
     for (const o of e.objs) {
       const r = o.body.radiusKm;
       if (r <= 0) continue;
       const rel = vsub(e.camPos, o.worldPos);
       const d = vlen(rel);
+      if (d < Math.max(r * 12, 3e5) && !this.visited.has(o.body.id)) {
+        this.visited.add(o.body.id);
+        this.score += 50;
+        this.onToast(`🧭 Discovered ${o.body.name} — +50`);
+        this.beep(700, 0.12, 'triangle', 0.05);
+        this.save();
+        this.onChange();
+      }
       if (d < r * 3 && d > 0) {
         const minAlt = r + Math.max(r * 2e-6, 0.02);
         if (d < minAlt) {
@@ -274,6 +358,8 @@ export class Game {
       rk.pos = [rk.pos[0] + rk.vel[0] * dt, rk.pos[1] + rk.vel[1] * dt, rk.pos[2] + rk.vel[2] * dt];
       rk.mesh.position.set(rk.pos[0] - e.camPos[0], rk.pos[1] - e.camPos[1], rk.pos[2] - e.camPos[2]);
       rk.mesh.rotation.x += rk.spin[0] * dt; rk.mesh.rotation.y += rk.spin[1] * dt;
+      if (rk.flash && rk.flash > 0) { rk.mesh.scale.setScalar(1 + rk.flash); rk.flash -= dt * 2; }
+      else rk.mesh.scale.setScalar(1);
       const d = vlen(vsub(rk.pos, e.camPos));
       if (d < rk.r + 40) { // bounce off + hull scrape
         const away = vsub(e.camPos, rk.pos);
@@ -281,6 +367,8 @@ export class Game {
         e.camPos = [rk.pos[0] + away[0] * f, rk.pos[1] + away[1] * f, rk.pos[2] + away[2] * f];
         if (!this.easy) {
           this.hull -= 8;
+          this.engine.shake = 1;
+          this.onDamage();
           this.beep(70, 0.3, 'sawtooth', 0.1);
           this.onToast('💥 Asteroid impact!');
           if (this.hull <= 0) this.respawn();
@@ -309,6 +397,8 @@ export class Game {
       en.mesh.position.set(en.pos[0] - e.camPos[0], en.pos[1] - e.camPos[1], en.pos[2] - e.camPos[2]);
       if (fighter) en.mesh.lookAt(en.mesh.position.x + en.vel[0], en.mesh.position.y + en.vel[1], en.mesh.position.z + en.vel[2]);
       else en.mesh.rotation.y += dt * 2;
+      if (en.flash && en.flash > 0) { en.mesh.scale.setScalar(1 + en.flash); en.flash -= dt * 2; }
+      else en.mesh.scale.setScalar(1);
       if (d > 60000) { e.scene.remove(en.mesh); this.enemies.splice(i, 1); } // lost them
     }
 
@@ -326,6 +416,8 @@ export class Game {
             const dmg = 12;
             if (this.shield > 0) this.shield = Math.max(0, this.shield - dmg);
             else this.hull -= dmg;
+            this.engine.shake = 1.4;
+            this.onDamage();
             this.beep(90, 0.25, 'sawtooth', 0.09);
             this.onToast(this.hull <= 0 ? '💥 Ship destroyed! Respawning at Earth…' : '💢 Hit! Hull damaged');
             if (this.hull <= 0) this.respawn();
@@ -334,17 +426,21 @@ export class Game {
         }
       } else if (!dead && !b.hostile) {
         for (let j = this.rocks.length - 1; j >= 0; j--) {
-          if (vlen(vsub(b.pos, this.rocks[j].pos)) < this.rocks[j].r + 20) {
+          if (vlen(vsub(b.pos, this.rocks[j].pos)) < this.rocks[j].r + 30) {
             this.rocks[j].hp -= 1 + this.levels.damage;
+            this.rocks[j].flash = 0.2;
             dead = true;
+            this.onHit();
             if (this.rocks[j].hp <= 0) this.breakRock(j, true);
             break;
           }
         }
         if (!dead) for (let j = 0; j < this.enemies.length; j++) {
-          if (vlen(vsub(b.pos, this.enemies[j].pos)) < 70) {
+          if (vlen(vsub(b.pos, this.enemies[j].pos)) < 95) {
             this.enemies[j].hp -= 1 + this.levels.damage;
+            this.enemies[j].flash = 0.4;
             dead = true;
+            this.onHit();
             this.beep(440, 0.05, 'square', 0.03);
             if (this.enemies[j].hp <= 0) this.killEnemy(j);
             break;

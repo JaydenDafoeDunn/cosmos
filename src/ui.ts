@@ -18,6 +18,9 @@ type V3like = [number, number, number];
 
 export class UI {
   toastBox = el('div', 'toasts', '', document.body);
+  hitmark = el('div', 'hitmark', '', document.body);
+  dmgVignette = el('div', 'dmgflash', '', document.body);
+  lead = el('div', 'lead', '', document.body);
   onWalk: () => void = () => {};
 
   constructor(private engine: Engine, private game: Game, private objMap: Map<string, SceneObj>) {
@@ -27,7 +30,35 @@ export class UI {
     this.buildHelp();
     game.onToast = (m, big) => this.toast(m, big);
     game.onChange = () => this.refreshGame();
+    game.onHit = () => this.flash(this.hitmark, 130);
+    game.onDamage = () => this.flash(this.dmgVignette, 350);
     engine.onSelect = (o) => this.showInfo(o);
+  }
+
+  private flash(elm: HTMLElement, ms: number) {
+    elm.classList.add('on');
+    setTimeout(() => elm.classList.remove('on'), ms);
+  }
+
+  /** aim-lead reticle for the nearest enemy — call every frame */
+  updateLead() {
+    const e = this.engine;
+    let best: { d: number; p: V3like; v: V3like } | null = null;
+    for (const en of this.game.enemies) {
+      const d = Math.hypot(en.pos[0] - e.camPos[0], en.pos[1] - e.camPos[1], en.pos[2] - e.camPos[2]);
+      if (d < 6000 && (!best || d < best.d)) best = { d, p: en.pos, v: en.vel };
+    }
+    if (!best) { this.lead.style.display = 'none'; return; }
+    const t = best.d / 12000; // bolt flight time
+    const v = new THREE.Vector3(
+      best.p[0] + best.v[0] * t - e.camPos[0],
+      best.p[1] + best.v[1] * t - e.camPos[1],
+      best.p[2] + best.v[2] * t - e.camPos[2],
+    ).applyQuaternion(e.quat.clone().invert());
+    if (v.z >= 0) { this.lead.style.display = 'none'; return; }
+    const p = v.applyMatrix4(e.camera.projectionMatrix);
+    this.lead.style.display = 'block';
+    this.lead.style.transform = `translate(${((p.x * 0.5 + 0.5) * innerWidth).toFixed(0)}px, ${((-p.y * 0.5 + 0.5) * innerHeight).toFixed(0)}px) translate(-50%,-50%)`;
   }
 
   toast(msg: string, big = false) {
@@ -118,6 +149,8 @@ export class UI {
         btn.onclick = () => { this.game.buy(u.id) ? this.toast(`Upgraded: ${u.name}`) : this.toast('Not enough points!'); render(); };
       }
     };
+    const reset = el('div', 'resetsave', 'reset progress', up);
+    reset.onclick = () => { if (confirm('Reset score, upgrades and mission progress?')) this.game.resetSave(); };
     $('btn-upgrades').onclick = () => { up.classList.toggle('open'); render(); };
     $('btn-mission-warp').onclick = () => this.game.warpToMission();
   }

@@ -11,6 +11,26 @@ function noiseBuffer(a: AudioContext): AudioBuffer {
   return b;
 }
 
+// engine hum — level 0..1, call every frame while flying
+let eng: { gain: GainNode; filt: BiquadFilterNode } | null = null;
+export function engineHum(level: number) {
+  try {
+    if (!eng) {
+      const a = ac();
+      const src = a.createBufferSource();
+      src.buffer = noiseBuffer(a); src.loop = true;
+      const filt = a.createBiquadFilter();
+      filt.type = 'lowpass'; filt.frequency.value = 90;
+      const gain = a.createGain(); gain.gain.value = 0;
+      src.connect(filt).connect(gain).connect(a.destination);
+      src.start();
+      eng = { gain, filt };
+    }
+    eng.gain.gain.setTargetAtTime(level * 0.035, ac().currentTime, 0.15);
+    eng.filt.frequency.setTargetAtTime(90 + level * 260, ac().currentTime, 0.15);
+  } catch { /* pre-gesture */ }
+}
+
 /** wind/rain/dust ambience per weather kind; null = silence (vacuum!) */
 export function ambient(kind: 'rain' | 'dust' | 'methane-rain' | 'snow' | 'wind' | null) {
   current?.stop();
