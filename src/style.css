@@ -48,6 +48,11 @@ button:disabled { opacity: .45; cursor: default; }
 .badge.warn { background: rgba(160,80,220,.3); border-color: #b57aff; color: #dfc4ff; }
 .flags { margin: 6px 0; }
 
+#radar { position: fixed; left: 226px; bottom: 96px; width: 150px; height: 150px; z-index: 9;
+  border-radius: 50%; background: rgba(6,12,24,.72); border: 1px solid rgba(130,160,220,.4);
+  box-shadow: 0 0 18px rgba(60,120,220,.15); }
+body.kid-mode #radar, body.walking #radar, body.walking #gamehud { display: none; }
+@media (max-width: 760px) { #radar { left: 10px; width: 110px; height: 110px; } }
 #gamehud { position: fixed; right: 10px; bottom: 90px; width: 265px; z-index: 9;
   background: rgba(8,12,26,.75); border: 1px solid rgba(130,160,220,.25); border-radius: 12px; padding: 10px; }
 #gamehud .row { display: flex; align-items: center; gap: 8px; justify-content: space-between; }

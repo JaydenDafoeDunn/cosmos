@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { Engine, SceneObj, V3, vlen, vsub, fmtDist } from './engine';
 import { byId } from './data';
 
-interface Enemy { mesh: THREE.Group; pos: V3; vel: V3; hp: number; fireCd: number }
+interface Enemy { mesh: THREE.Group; pos: V3; vel: V3; hp: number; fireCd: number; kind: 'drone' | 'fighter'; strafe: number }
 interface Rock { mesh: THREE.Mesh; pos: V3; vel: V3; spin: V3; hp: number; r: number }
 interface Bolt { mesh: THREE.Mesh; pos: V3; vel: V3; life: number; hostile: boolean }
 
@@ -48,12 +48,25 @@ export class Game {
   onChange: () => void = () => {};
   onToast: (msg: string, big?: boolean) => void = () => {};
   private enemyProto: THREE.Group;
+  private fighterProto: THREE.Group;
 
   constructor(private engine: Engine, private objMap: Map<string, SceneObj>) {
     this.enemyProto = new THREE.Group();
     const body = new THREE.Mesh(new THREE.OctahedronGeometry(30, 0), new THREE.MeshBasicMaterial({ color: 0xff4466, wireframe: true }));
     const core = new THREE.Mesh(new THREE.OctahedronGeometry(14, 1), new THREE.MeshBasicMaterial({ color: 0xff8899 }));
     this.enemyProto.add(body, core);
+    // fighter: dart fuselage + swept wings + engine glow
+    this.fighterProto = new THREE.Group();
+    const hullMat = new THREE.MeshStandardMaterial({ color: 0x5a2030, roughness: 0.4, metalness: 0.6 });
+    const fus = new THREE.Mesh(new THREE.ConeGeometry(14, 70, 6), hullMat);
+    fus.rotation.x = Math.PI / 2;
+    const wing = new THREE.Mesh(new THREE.BoxGeometry(90, 3, 26), hullMat);
+    wing.position.z = 12;
+    const fin = new THREE.Mesh(new THREE.BoxGeometry(3, 26, 18), hullMat);
+    fin.position.set(0, 12, 16);
+    const engineGlow = new THREE.Mesh(new THREE.SphereGeometry(7, 8, 6), new THREE.MeshBasicMaterial({ color: 0xff6633 }));
+    engineGlow.position.z = 36;
+    this.fighterProto.add(fus, wing, fin, engineGlow);
   }
 
   cost(id: string) { return Math.round(UPGRADES.find((u) => u.id === id)!.base * Math.pow(2.1, this.levels[id])); }
@@ -91,9 +104,13 @@ export class Game {
       const dir = new THREE.Vector3((Math.random() - 0.5) * 1.4, (Math.random() - 0.5) * 0.8, -1).normalize().applyQuaternion(q);
       const dist = 2500 + Math.random() * 2500;
       const pos: V3 = [e.camPos[0] + dir.x * dist, e.camPos[1] + dir.y * dist, e.camPos[2] + dir.z * dist];
-      const mesh = this.enemyProto.clone();
+      const fighter = this.missionIdx >= 4 && i % 3 === 2; // later waves mix in fighters
+      const mesh = (fighter ? this.fighterProto : this.enemyProto).clone();
       e.scene.add(mesh);
-      this.enemies.push({ mesh, pos, vel: [0, 0, 0], hp: 3, fireCd: 2 + Math.random() * 3 });
+      this.enemies.push({
+        mesh, pos, vel: [0, 0, 0], hp: fighter ? 6 : 3, fireCd: 2 + Math.random() * 3,
+        kind: fighter ? 'fighter' : 'drone', strafe: Math.random() > 0.5 ? 1 : -1,
+      });
     }
     this.onToast(this.easy ? '🤖 Space robots incoming! Tag them with your laser!' : `⚠ ${n} hostile drones inbound!`, true);
     this.beep(180, 0.4, 'sawtooth', 0.08);
@@ -118,7 +135,8 @@ export class Game {
     }
     this.rocks.push({
       mesh, pos, hp: r > 60 ? 2 : 1, r,
-      vel: vel ?? [(Math.random() - 0.5) * 30, (Math.random() - 0.5) * 10, (Math.random() - 0.5) * 30],
+      vel: vel ?? [(Math.random() - 0.5) * 8, (Math.random() - 0.5) * 3, (Math.random() - 0.5) * 8], // gentle drift
+
       spin: [(Math.random() - 0.5), (Math.random() - 0.5), (Math.random() - 0.5)],
     });
   }
@@ -141,7 +159,8 @@ export class Game {
   private maintainRocks() {
     const dSun = vlen(this.engine.camPos);
     const inBelt = (dSun > 2.1 * 1.496e8 && dSun < 3.3 * 1.496e8) || (dSun > 30 * 1.496e8 && dSun < 50 * 1.496e8);
-    const target = inBelt ? 10 : this.enemies.length ? 4 : 0;
+    const inSystem = dSun < 60 * 1.496e8;
+    const target = inBelt ? 24 : this.enemies.length ? 8 : inSystem ? 6 : 0;
     if (this.rocks.length < target) this.spawnRock(45 + Math.random() * 80);
     for (let i = this.rocks.length - 1; i >= 0; i--)
       if (vlen(vsub(this.rocks[i].pos, this.engine.camPos)) > 80000) this.breakRock(i, false);
@@ -182,9 +201,10 @@ export class Game {
     const en = this.enemies[i];
     this.engine.scene.remove(en.mesh);
     this.enemies.splice(i, 1);
-    this.score += 100;
+    const pts = en.kind === 'fighter' ? 250 : 100;
+    this.score += pts;
     this.beep(120, 0.3, 'sawtooth', 0.07);
-    this.onToast(this.easy ? '⭐ Tagged one! +100' : '+100 — drone destroyed');
+    this.onToast(this.easy ? `⭐ Tagged one! +${pts}` : `+${pts} — ${en.kind} destroyed`);
     if (this.waveLeft > 0) {
       this.waveLeft--;
       if (this.waveLeft === 0) this.completeMission();
@@ -274,15 +294,21 @@ export class Game {
       const en = this.enemies[i];
       const rel = vsub(e.camPos, en.pos);
       const d = vlen(rel);
-      const want = this.easy ? 900 : 450;
-      const sp = this.easy ? 250 : 650;
+      const fighter = en.kind === 'fighter';
+      const want = this.easy ? 900 : fighter ? 800 : 450;
+      const sp = this.easy ? 250 : fighter ? 950 : 650;
       const k = d > want ? 1 : -0.6;
       en.vel = [rel[0] / d * sp * k, rel[1] / d * sp * k, rel[2] / d * sp * k];
+      if (fighter) { // strafing orbit around the player
+        const t = new THREE.Vector3(rel[0], rel[1], rel[2]).cross(new THREE.Vector3(0, 1, 0)).normalize().multiplyScalar(sp * 0.85 * en.strafe);
+        en.vel = [en.vel[0] * 0.55 + t.x, en.vel[1] * 0.55 + t.y, en.vel[2] * 0.55 + t.z];
+      }
       en.pos = [en.pos[0] + en.vel[0] * dt, en.pos[1] + en.vel[1] * dt, en.pos[2] + en.vel[2] * dt];
       en.fireCd -= dt;
-      if (en.fireCd <= 0 && d < 4000) { en.fireCd = this.easy ? 6 : 2.5 + Math.random() * 2; this.enemyFire(en); }
+      if (en.fireCd <= 0 && d < 4000) { en.fireCd = this.easy ? 6 : fighter ? 1.7 : 2.5 + Math.random() * 2; this.enemyFire(en); }
       en.mesh.position.set(en.pos[0] - e.camPos[0], en.pos[1] - e.camPos[1], en.pos[2] - e.camPos[2]);
-      en.mesh.rotation.y += dt * 2;
+      if (fighter) en.mesh.lookAt(en.mesh.position.x + en.vel[0], en.mesh.position.y + en.vel[1], en.mesh.position.z + en.vel[2]);
+      else en.mesh.rotation.y += dt * 2;
       if (d > 60000) { e.scene.remove(en.mesh); this.enemies.splice(i, 1); } // lost them
     }
 

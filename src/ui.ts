@@ -1,4 +1,5 @@
 // All HUD / panels / catalog / info-card DOM.
+import * as THREE from 'three';
 import { BODIES, Body, Group, GROUP_LABELS } from './data';
 import { Engine, fmtDist, fmtRadius, SceneObj, vlen, vsub } from './engine';
 import { Game, UPGRADES } from './game';
@@ -12,6 +13,8 @@ export function el(tag: string, cls: string, html = '', parent?: HTMLElement): H
   parent?.appendChild(e);
   return e;
 }
+
+type V3like = [number, number, number];
 
 export class UI {
   toastBox = el('div', 'toasts', '', document.body);
@@ -129,6 +132,7 @@ export class UI {
 
   /** per-frame HUD text */
   tick() {
+    this.drawRadar();
     const e = this.engine;
     $('hud-dist').textContent = fmtDist(e.distFromSun()) + ' from Sun';
     const near = e.objs.reduce((a, o) => {
@@ -149,6 +153,39 @@ export class UI {
     const sel = e.selected;
     const infoDist = document.getElementById('info-dist');
     if (sel && infoDist) infoDist.textContent = fmtDist(vlen(vsub(sel.worldPos, e.camPos)));
+  }
+
+  drawRadar() {
+    const cv = $('radar') as HTMLCanvasElement;
+    const ctx = cv.getContext('2d')!;
+    const W = cv.width, C = W / 2, R = C - 6, range = 6000; // km
+    ctx.clearRect(0, 0, W, W);
+    ctx.strokeStyle = 'rgba(120,180,255,.25)';
+    for (const rr of [R, R * 0.55]) { ctx.beginPath(); ctx.arc(C, C, rr, 0, 7); ctx.stroke(); }
+    // sweep
+    const a = (performance.now() / 1600) % (Math.PI * 2);
+    ctx.strokeStyle = 'rgba(120,220,255,.3)';
+    ctx.beginPath(); ctx.moveTo(C, C); ctx.lineTo(C + Math.sin(a) * R, C - Math.cos(a) * R); ctx.stroke();
+    const invQ = this.engine.quat.clone().invert();
+    const v = new THREE.Vector3();
+    const blip = (rel: V3like, color: string, size: number, clampRim = false) => {
+      v.set(rel[0], rel[1], rel[2]).applyQuaternion(invQ);
+      let x = v.x / range, y = v.z / range; // forward (-z) = up
+      const L = Math.hypot(x, y);
+      if (L > 0.94) { if (!clampRim) return; x = x / L * 0.94; y = y / L * 0.94; }
+      ctx.fillStyle = color;
+      ctx.beginPath(); ctx.arc(C + x * R, C + y * R, size, 0, 7); ctx.fill();
+    };
+    for (const en of this.game.enemies)
+      blip(vsub(en.pos, this.engine.camPos), en.kind === 'fighter' ? '#ff8833' : '#ff4466', 3);
+    for (const rk of this.game.rocks)
+      blip(vsub(rk.pos, this.engine.camPos), 'rgba(190,190,190,.8)', 2);
+    // mission target: gold marker clamped to the rim
+    const m = this.game.mission;
+    if (m?.targetId) blip(vsub(this.objMap.get(m.targetId)!.worldPos, this.engine.camPos), '#ffd97a', 4, true);
+    // you
+    ctx.fillStyle = '#7adcff';
+    ctx.beginPath(); ctx.arc(C, C, 2.5, 0, 7); ctx.fill();
   }
 
   buildHelp() {

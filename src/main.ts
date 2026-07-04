@@ -114,6 +114,7 @@ const surfHud = document.getElementById('surface-hud')!;
 function enterSurface(bodyId: string) {
   const o = objMap.get(bodyId)!;
   surface.enter(o.body, kid.active);
+  document.body.classList.add('walking');
   surfHud.style.display = 'flex';
   document.getElementById('surf-name')!.textContent =
     `🚶 ${o.body.name} — gravity ${surface.cfg.g} m/s² · ${surface.cfg.desc}` +
@@ -123,6 +124,7 @@ function enterSurface(bodyId: string) {
 }
 function leaveSurface() {
   surface.exit();
+  document.body.classList.remove('walking');
   surfHud.style.display = 'none';
   ambient(null);
   ui.toast('🚀 Back in the ship');

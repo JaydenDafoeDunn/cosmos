@@ -37,8 +37,8 @@ export class Hands {
           const lm = res.landmarks?.[0];
           if (lm) {
             const palm = lm[9]; // middle-finger base ≈ palm centre
-            // steer toward where the hand points (mirrored)
-            this.engine.yaw += (palm.x - 0.5) * -0.06;
+            // steer like a mirror: hand right -> look right, hand up -> look up
+            this.engine.yaw += (palm.x - 0.5) * 0.06;
             this.engine.pitch = Math.max(-1.5, Math.min(1.5, this.engine.pitch + (palm.y - 0.5) * -0.06));
             const pinch = Math.hypot(lm[4].x - lm[8].x, lm[4].y - lm[8].y);
             if (pinch < 0.06) this.engine.moveForward(0.03);
