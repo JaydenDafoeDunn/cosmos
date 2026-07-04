@@ -79,7 +79,9 @@ void main() {
 
 export class BlackHoleView {
   active = false;
-  quality: 'high' | 'low' = 'high';
+  mode: 'auto' | 'high' | 'low' | 'off' = 'auto';
+  private autoSteps = 140;
+  private ema = 16; // ms/frame moving average
   private scene = new THREE.Scene();
   private cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
   private mat: THREE.ShaderMaterial;
@@ -103,7 +105,20 @@ export class BlackHoleView {
   }
 
   /** Call each frame. Returns true if it rendered (i.e. near a BH). */
+  /** feed real frame time (ms) so AUTO mode can match the GPU */
+  tune(dtMs: number) {
+    if (!this.active || this.mode !== 'auto') return;
+    this.ema = this.ema * 0.92 + dtMs * 0.08;
+    if (this.ema > 40 && this.autoSteps > 36) this.autoSteps = Math.max(36, this.autoSteps * 0.85); // <25 fps: cheaper
+    else if (this.ema < 20 && this.autoSteps < 220) this.autoSteps = Math.min(220, this.autoSteps * 1.06); // >50 fps: prettier
+  }
+
+  get label(): string {
+    return this.mode === 'auto' ? `AUTO·${Math.round(this.autoSteps)}` : this.mode.toUpperCase();
+  }
+
   update(camPos: V3, quat: THREE.Quaternion, holes: SceneObj[]): boolean {
+    if (this.mode === 'off') { this.active = false; this.target = null; return false; }
     let best: SceneObj | null = null, bestRatio = Infinity;
     for (const h of holes) {
       const d = vlen(vsub(h.worldPos, camPos));
@@ -123,7 +138,7 @@ export class BlackHoleView {
     (u.uBasis.value as THREE.Matrix3).setFromMatrix4(new THREE.Matrix4().makeRotationFromQuaternion(quat));
     (u.uRes.value as THREE.Vector2).set(innerWidth * this.renderer.getPixelRatio(), innerHeight * this.renderer.getPixelRatio());
     u.uTime.value = performance.now() / 1000;
-    u.uSteps.value = this.quality === 'high' ? 220 : 64;
+    u.uSteps.value = this.mode === 'high' ? 220 : this.mode === 'low' ? 56 : this.autoSteps;
     u.uDiskTint.value = best.body.id === 'sgra' ? 0.15 : best.body.id === 'ton618' ? 0.5 : 0;
     this.renderer.render(this.scene, this.cam);
     return true;

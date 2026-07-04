@@ -139,6 +139,13 @@ export class UI {
     $('hud-speed').textContent = fmtDist(e.adaptiveSpeed() * this.game.speedFactor) + '/s';
     $('hud-date').textContent = new Date(e.simTimeMs).toISOString().slice(0, 10);
     $('mission').textContent = this.game.missionTargetHint();
+    if (document.body.classList.contains('cockpit')) {
+      $('cp-spd').textContent = fmtDist(e.adaptiveSpeed() * this.game.speedFactor) + '/s';
+      $('cp-hull').textContent = `${Math.max(this.game.hull, 0)}%`;
+      $('cp-shd').textContent = String(this.game.shield);
+      $('cp-pts').textContent = String(this.game.score);
+      $('cp-tgt').textContent = this.game.missionTargetHint().replace(/^.*?— /, '').slice(0, 34) || '—';
+    }
     const sel = e.selected;
     const infoDist = document.getElementById('info-dist');
     if (sel && infoDist) infoDist.textContent = fmtDist(vlen(vsub(sel.worldPos, e.camPos)));

@@ -92,6 +92,33 @@ button:disabled { opacity: .45; cursor: default; }
   display: flex; gap: 12px; align-items: center; background: rgba(8,12,26,.85);
   border: 1px solid rgba(130,160,220,.35); border-radius: 30px; padding: 8px 18px; }
 
+/* ---------------- cockpit ---------------- */
+#cockpit { display: none; position: fixed; inset: 0; pointer-events: none; z-index: 8; }
+body.cockpit #cockpit { display: block; }
+body.cockpit #gamehud, body.cockpit #catalog { display: none; }
+#cockpit .canopy { position: absolute; inset: 0;
+  background: radial-gradient(ellipse 115% 100% at 50% 42%, transparent 62%, rgba(4,8,16,.55) 78%, rgba(2,4,10,.97) 96%);
+  box-shadow: inset 0 0 120px rgba(0,0,0,.7); }
+#cockpit .strut { position: absolute; top: -8%; width: 26px; height: 68%;
+  background: linear-gradient(90deg, #060a14, #1a2338 45%, #2a3a5c 50%, #1a2338 55%, #060a14);
+  border-left: 1px solid rgba(140,170,230,.2); border-right: 1px solid rgba(140,170,230,.2); }
+#cockpit .s1 { left: 9%; transform: rotate(16deg); }
+#cockpit .s2 { right: 9%; transform: rotate(-16deg); }
+#cockpit .xhair { position: absolute; left: 50%; top: 50%; width: 30px; height: 30px;
+  transform: translate(-50%, -50%); border: 1.5px solid rgba(120,220,255,.75); border-radius: 50%; }
+#cockpit .xhair::before, #cockpit .xhair::after { content: ''; position: absolute; background: rgba(120,220,255,.75); }
+#cockpit .xhair::before { left: 50%; top: -9px; width: 1.5px; height: 9px; box-shadow: 0 39px 0 rgba(120,220,255,.75); }
+#cockpit .xhair::after { top: 50%; left: -9px; height: 1.5px; width: 9px; box-shadow: 39px 0 0 rgba(120,220,255,.75); }
+#cockpit .console { position: absolute; left: 50%; bottom: 0; transform: translateX(-50%);
+  display: flex; gap: 22px; align-items: baseline; padding: 12px 34px 30px;
+  background: linear-gradient(#101a30, #060a16); border-radius: 26px 26px 0 0;
+  border: 1px solid rgba(140,170,230,.35); border-bottom: none;
+  font-family: ui-monospace, monospace; }
+#cockpit .console label { display: block; font-size: 9px; color: #5a7099; letter-spacing: .15em; }
+#cockpit .console span { font-size: 15px; color: #7adcff; text-shadow: 0 0 8px rgba(120,220,255,.5); }
+#cockpit .console .tgt span { color: #ffd97a; text-shadow: 0 0 8px rgba(255,217,122,.4); font-size: 12px; }
+body.cockpit #bottombar { padding-bottom: 2px; }
+
 /* ---------------- kid mode ---------------- */
 .kidbar { position: fixed; bottom: 0; left: 0; right: 0; display: none; z-index: 25; gap: 8px;
   padding: 10px; background: linear-gradient(transparent, rgba(10,5,30,.95) 30%); align-items: center; }

@@ -67,10 +67,19 @@ btnKid.onclick = () => {
 };
 document.getElementById('btn-hands')!.onclick = () => hands.toggle();
 const btnLens = document.getElementById('btn-lens')!;
+const LENS_MODES = ['auto', 'high', 'low', 'off'] as const;
 btnLens.onclick = () => {
-  bh.quality = bh.quality === 'high' ? 'low' : 'high';
-  btnLens.textContent = `Lensing: ${bh.quality.toUpperCase()}`;
+  bh.mode = LENS_MODES[(LENS_MODES.indexOf(bh.mode) + 1) % LENS_MODES.length];
+  btnLens.textContent = `Lensing: ${bh.label}`;
 };
+btnLens.textContent = `Lensing: ${bh.label}`;
+const btnCockpit = document.getElementById('btn-cockpit')!;
+const toggleCockpit = () => {
+  const on = document.body.classList.toggle('cockpit');
+  btnCockpit.textContent = on ? '🌌 Exterior' : '🎛 Cockpit';
+  ui.toast(on ? '🎛 Cockpit view — V to exit' : 'Exterior view');
+};
+btnCockpit.onclick = toggleCockpit;
 const btnInflate = document.getElementById('btn-inflate')!;
 btnInflate.onclick = () => {
   engine.inflate = engine.inflate === 1 ? 50 : engine.inflate === 50 ? 1000 : 1;
@@ -83,6 +92,7 @@ addEventListener('keydown', (e) => {
   if ((e.target as HTMLElement)?.tagName === 'INPUT') return;
   if (e.code === 'Space') { e.preventDefault(); if (!surface.active) game.firing = true; }
   if (e.code === 'KeyN') game.warpToMission();
+  if (e.code === 'KeyV' && !surface.active) toggleCockpit();
   if (e.code === 'Escape' && surface.active) leaveSurface();
 });
 addEventListener('keyup', (e) => { if (e.code === 'Space') game.firing = false; });
@@ -158,6 +168,8 @@ function loop() {
 
   // black hole lensing overlay (replaces scene render when near a hole)
   bh.update(engine.camPos, engine.quat, holes);
+  bh.tune(dt * 1000);
+  if (bh.active && bh.mode === 'auto' && uiTick % 30 === 0) btnLens.textContent = `Lensing: ${bh.label}`;
   if (bh.active && bh.target) {
     document.getElementById('hud-alt')!.textContent =
       `⚫ ${(vlen(vsub(bh.target.worldPos, engine.camPos)) / bh.target.body.radiusKm).toFixed(1)} Schwarzschild radii from ${bh.target.body.name}`;

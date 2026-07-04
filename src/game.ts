@@ -4,6 +4,7 @@ import { Engine, SceneObj, V3, vlen, vsub, fmtDist } from './engine';
 import { byId } from './data';
 
 interface Enemy { mesh: THREE.Group; pos: V3; vel: V3; hp: number; fireCd: number }
+interface Rock { mesh: THREE.Mesh; pos: V3; vel: V3; spin: V3; hp: number; r: number }
 interface Bolt { mesh: THREE.Mesh; pos: V3; vel: V3; life: number; hostile: boolean }
 
 export interface Mission {
@@ -38,6 +39,7 @@ export class Game {
   missionIdx = 0;
   waveLeft = 0;
   enemies: Enemy[] = [];
+  rocks: Rock[] = [];
   bolts: Bolt[] = [];
   fireCd = 0;
   firing = false;
@@ -95,6 +97,54 @@ export class Game {
     }
     this.onToast(this.easy ? '🤖 Space robots incoming! Tag them with your laser!' : `⚠ ${n} hostile drones inbound!`, true);
     this.beep(180, 0.4, 'sawtooth', 0.08);
+  }
+
+  spawnRock(r: number, at?: V3, vel?: V3) {
+    const e = this.engine;
+    const geo = new THREE.IcosahedronGeometry(r, 1);
+    const p = geo.attributes.position; // lumpy potato
+    for (let i = 0; i < p.count; i++) {
+      const m = 0.75 + Math.random() * 0.5;
+      p.setXYZ(i, p.getX(i) * m, p.getY(i) * m, p.getZ(i) * m);
+    }
+    geo.computeVertexNormals();
+    const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: 0x8a7f70, roughness: 1, flatShading: true }));
+    e.scene.add(mesh);
+    let pos = at;
+    if (!pos) {
+      const dir = new THREE.Vector3(Math.random() - 0.5, (Math.random() - 0.5) * 0.5, Math.random() - 0.5).normalize();
+      const d = 1800 + Math.random() * 3500;
+      pos = [e.camPos[0] + dir.x * d, e.camPos[1] + dir.y * d, e.camPos[2] + dir.z * d];
+    }
+    this.rocks.push({
+      mesh, pos, hp: r > 60 ? 2 : 1, r,
+      vel: vel ?? [(Math.random() - 0.5) * 30, (Math.random() - 0.5) * 10, (Math.random() - 0.5) * 30],
+      spin: [(Math.random() - 0.5), (Math.random() - 0.5), (Math.random() - 0.5)],
+    });
+  }
+
+  private breakRock(i: number, byPlayer: boolean) {
+    const rk = this.rocks[i];
+    this.engine.scene.remove(rk.mesh);
+    (rk.mesh.geometry as THREE.BufferGeometry).dispose();
+    this.rocks.splice(i, 1);
+    if (byPlayer) {
+      this.score += 25;
+      this.beep(200, 0.18, 'sawtooth', 0.06);
+      if (rk.r > 55) for (let k = 0; k < 2; k++) // split!
+        this.spawnRock(rk.r * 0.55, [...rk.pos] as V3, [rk.vel[0] + (Math.random() - 0.5) * 120, rk.vel[1] + (Math.random() - 0.5) * 120, rk.vel[2] + (Math.random() - 0.5) * 120]);
+      this.onChange();
+    }
+  }
+
+  /** keep an asteroid field around the player in the belts / during fights */
+  private maintainRocks() {
+    const dSun = vlen(this.engine.camPos);
+    const inBelt = (dSun > 2.1 * 1.496e8 && dSun < 3.3 * 1.496e8) || (dSun > 30 * 1.496e8 && dSun < 50 * 1.496e8);
+    const target = inBelt ? 10 : this.enemies.length ? 4 : 0;
+    if (this.rocks.length < target) this.spawnRock(45 + Math.random() * 80);
+    for (let i = this.rocks.length - 1; i >= 0; i--)
+      if (vlen(vsub(this.rocks[i].pos, this.engine.camPos)) > 80000) this.breakRock(i, false);
   }
 
   fire() {
@@ -197,6 +247,28 @@ export class Game {
     }
     this.lastLanded = landed;
 
+    // asteroids
+    this.maintainRocks();
+    for (let i = this.rocks.length - 1; i >= 0; i--) {
+      const rk = this.rocks[i];
+      rk.pos = [rk.pos[0] + rk.vel[0] * dt, rk.pos[1] + rk.vel[1] * dt, rk.pos[2] + rk.vel[2] * dt];
+      rk.mesh.position.set(rk.pos[0] - e.camPos[0], rk.pos[1] - e.camPos[1], rk.pos[2] - e.camPos[2]);
+      rk.mesh.rotation.x += rk.spin[0] * dt; rk.mesh.rotation.y += rk.spin[1] * dt;
+      const d = vlen(vsub(rk.pos, e.camPos));
+      if (d < rk.r + 40) { // bounce off + hull scrape
+        const away = vsub(e.camPos, rk.pos);
+        const f = (rk.r + 45) / d;
+        e.camPos = [rk.pos[0] + away[0] * f, rk.pos[1] + away[1] * f, rk.pos[2] + away[2] * f];
+        if (!this.easy) {
+          this.hull -= 8;
+          this.beep(70, 0.3, 'sawtooth', 0.1);
+          this.onToast('💥 Asteroid impact!');
+          if (this.hull <= 0) this.respawn();
+          this.onChange();
+        } else this.beep(140, 0.15, 'sine', 0.05);
+      }
+    }
+
     // enemies
     for (let i = this.enemies.length - 1; i >= 0; i--) {
       const en = this.enemies[i];
@@ -235,7 +307,15 @@ export class Game {
           }
         }
       } else if (!dead && !b.hostile) {
-        for (let j = 0; j < this.enemies.length; j++) {
+        for (let j = this.rocks.length - 1; j >= 0; j--) {
+          if (vlen(vsub(b.pos, this.rocks[j].pos)) < this.rocks[j].r + 20) {
+            this.rocks[j].hp -= 1 + this.levels.damage;
+            dead = true;
+            if (this.rocks[j].hp <= 0) this.breakRock(j, true);
+            break;
+          }
+        }
+        if (!dead) for (let j = 0; j < this.enemies.length; j++) {
           if (vlen(vsub(b.pos, this.enemies[j].pos)) < 70) {
             this.enemies[j].hp -= 1 + this.levels.damage;
             dead = true;
