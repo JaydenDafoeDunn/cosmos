@@ -56,9 +56,13 @@ export function compressD(d: number): number {
 // GLSL version of the same, for point clouds / lines
 export const COMPRESS_GLSL = `
   const float LZ = ${LINEAR_ZONE.toExponential()};
+  // NB: distances reach 4e23 km; length() would square that past float32 max
+  // (inf -> NaN -> giant white garbage points on some GPUs). Rescale first.
   vec3 compress(vec3 rel) {
-    float d = length(rel);
-    if (d <= LZ || d == 0.0) return rel;
+    vec3 rs = rel * 1e-12;
+    float d = length(rs) * 1e12;
+    if (!(d > 0.0) || d > 1e30) return vec3(0.0, 0.0, -1e30); // NaN/degenerate guard: park behind far plane
+    if (d <= LZ) return rel;
     return rel * (LZ * (1.0 + log(d / LZ)) / d);
   }
 `;
@@ -96,8 +100,8 @@ export class Engine {
   lastFrame = performance.now();
 
   constructor(canvas: HTMLCanvasElement) {
-    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, logarithmicDepthBuffer: true });
-    this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, logarithmicDepthBuffer: true, powerPreference: 'high-performance' });
+    this.renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5)); // integrated-GPU friendly
     this.camera = new THREE.PerspectiveCamera(60, 1, 1e-4, 1e13);
     this.scene.add(this.camera);
     this.resize();
