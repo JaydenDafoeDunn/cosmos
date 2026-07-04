@@ -239,7 +239,7 @@ export class Engine {
       const f = compressD(d) / d;
       v.set(rel[0] * f, rel[1] * f, rel[2] * f).applyQuaternion(invQ);
       if (v.z > 0) continue;
-      const p = v.clone().project(this.camera);
+      const p = v.clone().applyMatrix4(this.camera.projectionMatrix); // view rotation already applied above
       const sx = (p.x * 0.5 + 0.5) * w, sy = (-p.y * 0.5 + 0.5) * h;
       const px = Math.hypot(sx - x, sy - y) - Math.min(o.angularPx / 2, 80);
       if (px < bestD) { bestD = px; best = o; }
@@ -380,7 +380,7 @@ export class Labels {
       const f = compressD(o.distToCam) / o.distToCam;
       v.set(rel[0] * f, rel[1] * f, rel[2] * f).applyQuaternion(invQ);
       if (v.z >= 0) continue;
-      const p = v.project(e.camera);
+      const p = v.applyMatrix4(e.camera.projectionMatrix); // view rotation already applied above
       if (p.x < -1.05 || p.x > 1.05 || p.y < -1.05 || p.y > 1.05) continue;
       let pri = o.labelPriority + Math.min(o.angularPx, 200) * 0.02;
       if (o === e.selected) pri += 1000;
