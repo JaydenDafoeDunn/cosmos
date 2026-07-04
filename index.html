@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <title>COSMOS — true-scale universe explorer & space game</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🪐</text></svg>" />
+  <script type="module" crossorigin src="/cosmos/assets/index-BlezwCSb.js"></script>
+  <link rel="stylesheet" crossorigin href="/cosmos/assets/index-CduFndTS.css">
+</head>
+<body>
+  <canvas id="c"></canvas>
+  <div id="labels"></div>
+
+  <header id="topbar">
+    <span class="brand">COSMOS</span>
+    <input id="search" list="search-list" placeholder="🔍 fly to…" />
+    <datalist id="search-list"></datalist>
+    <span class="spacer"></span>
+    <button id="btn-cockpit">🎛 Cockpit</button>
+    <button id="btn-kid">🧒 Kid mode</button>
+    <button id="btn-hands">🖐 Hands</button>
+    <button id="btn-lens">Lensing: HIGH</button>
+    <button id="btn-inflate">🔍 Inflate ×1</button>
+    <button id="btn-help">?</button>
+  </header>
+
+  <aside id="catalog"></aside>
+  <aside id="info" style="display:none"></aside>
+
+  <div id="gamehud">
+    <div class="row"><span class="pts">⭐ <b id="score">0</b></span>
+      <button id="btn-upgrades">⬆ Upgrades</button></div>
+    <div class="bars"><div class="barwrap"><div id="hull" class="ok" style="width:100%"></div></div>
+      <div class="barwrap shieldwrap"><div id="shield" style="width:0%"></div></div></div>
+    <div class="row missionrow">🎯 <span id="mission"></span> <button id="btn-mission-warp">Warp</button></div>
+  </div>
+  <div id="upgrades"><h3>Ship upgrades</h3><div class="up-body"></div></div>
+
+  <footer id="bottombar">
+    <div id="timectl"></div>
+    <div id="hud">
+      <span id="hud-speed"></span> · <span id="hud-dist"></span> · <span id="hud-alt"></span> · <span id="hud-date"></span>
+    </div>
+  </footer>
+
+  <div id="cockpit">
+    <div class="canopy"></div>
+    <div class="strut s1"></div><div class="strut s2"></div>
+    <div class="xhair"></div>
+    <div class="console">
+      <div><label>SPD</label><span id="cp-spd">—</span></div>
+      <div><label>HULL</label><span id="cp-hull">100%</span></div>
+      <div><label>SHLD</label><span id="cp-shd">0</span></div>
+      <div><label>PTS</label><span id="cp-pts">0</span></div>
+      <div class="tgt"><label>TGT</label><span id="cp-tgt">—</span></div>
+    </div>
+  </div>
+
+  <div id="surface-hud" style="display:none">
+    <span id="surf-name"></span>
+    <button id="btn-takeoff">🚀 Back to ship</button>
+  </div>
+
+  <div id="help">
+    <button class="x" id="help-x">×</button>
+    <h2>How to fly</h2>
+    <p><b>Drag</b> to look · <b>W A S D</b> fly · <b>Q E</b> up/down · <b>Shift</b> boost · <b>scroll</b> speed · <b>Space / click hold</b> fire lasers · <b>V</b> cockpit view · <b>N</b> warp to mission target · click anything to inspect, then <b>Warp</b>. Watch for asteroids in the belts — shoot them (+25) or eat hull damage.</p>
+  <p><b>Lensing quality:</b> AUTO tunes ray-march steps to your GPU every frame (great for integrated graphics); or force HIGH / LOW / OFF.</p>
+    <p><b>Land & walk:</b> on rocky worlds press 🚶 in the info card. On foot: WASD walk, Space jump (real gravity per world!), Esc to lift off.</p>
+    <p><b>Scale:</b> every size, distance and position is real (NASA/JPL, Gaia). Directions and apparent sizes are always true; beyond ~67 AU radial distance is log-compressed so the observable universe fits on your screen — the HUD always shows true distances. Objects marked <span class="badge warn">HYPOTHETICAL</span> are ideas, not observations.</p>
+    <p><b>Black holes</b> render with ray-traced gravitational lensing — fly toward one.</p>
+  </div>
+</body>
+</html>
