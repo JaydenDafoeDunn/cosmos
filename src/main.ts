@@ -10,6 +10,10 @@ import { BlackHoleView } from './blackhole';
 import { Surface } from './surface';
 import { ambient } from './sound';
 
+declare const __BUILD__: string;
+document.getElementById('build')!.textContent = `build ${__BUILD__}`;
+console.log(`COSMOS build ${__BUILD__}`);
+
 const canvas = document.getElementById('c') as HTMLCanvasElement;
 const engine = new Engine(canvas);
 const objMap = buildBodies(engine);

@@ -370,7 +370,9 @@ function miniGalaxy(b: Body, radius: number): THREE.Points {
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
   g.setAttribute('color', new THREE.BufferAttribute(col, 3));
-  const mat = new THREE.PointsMaterial({ size: radius * 0.02, vertexColors: true, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false });
+  // sizeAttenuation MUST be false: world-sized points at galactic scale hit the
+  // GPU's max point size (1024px on many drivers) -> giant white squares.
+  const mat = new THREE.PointsMaterial({ size: 1.8, sizeAttenuation: false, vertexColors: true, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false });
   const p = new THREE.Points(g, mat);
   p.rotation.set(rng() * 2, rng() * 2, rng() * 2);
   return p;
