@@ -66,6 +66,11 @@ func submit_signature(origin: Vector3, dir: Vector3, tx: int, ty: int) -> void:
 	if server:
 		server.handle_signature_intent(multiplayer.get_remote_sender_id(), origin, dir, tx, ty)
 
+@rpc("any_peer", "call_remote", "reliable")
+func submit_slot2(origin: Vector3, dir: Vector3, tx: int, ty: int) -> void:
+	if server:
+		server.handle_slot2_intent(multiplayer.get_remote_sender_id(), origin, dir, tx, ty)
+
 # Area-effect blast VFX for everyone.
 @rpc("authority", "call_local", "unreliable")
 func push_blast(point: Vector3, radius: float) -> void:

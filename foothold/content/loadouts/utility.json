@@ -4,5 +4,6 @@
   "primary": "utility_tool",
   "secondary": "smg",
   "signature": "deploy",
+  "slot2": "place_heal",
   "passive": "reduced_utility_cost"
 }

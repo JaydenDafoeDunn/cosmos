@@ -105,7 +105,7 @@ func _build_floor() -> void:
 		for tx in grid.w:
 			var i := ty * grid.w + tx
 			mm.set_instance_transform(i, Transform3D(Basis(), Vector3((tx + 0.5) * TILE, -0.1, (ty + 0.5) * TILE)))
-			mm.set_instance_color(i, _owner_color(grid.owner[i]))
+			mm.set_instance_color(i, _tile_color(grid.owner[i], grid.type[i]))
 	floor_mm = MultiMeshInstance3D.new()
 	floor_mm.multimesh = mm
 	var mat := StandardMaterial3D.new()
@@ -233,7 +233,9 @@ func _update_hud() -> void:
 			TEAM_NAMES[my_team] if my_team < TEAM_NAMES.size() else str(my_team), _peer_count]
 	if _class_label:
 		var lo: Dictionary = Defs.loadouts.get(my_loadout, {})
-		_class_label.text = "CLASS: %s   [1 Assault  2 Painter  3 Utility  4 Explosive  5 Wizard]" % lo.get("name", my_loadout)
+		var sig_name: String = Defs.abilities.get(lo.get("signature", ""), {}).get("name", "—")
+		var s2_name: String = Defs.abilities.get(lo.get("slot2", ""), {}).get("name", "—")
+		_class_label.text = "CLASS: %s   RMB: %s   F: %s   [1-5 switch]" % [lo.get("name", my_loadout), sig_name, s2_name]
 	if _hp_fill:
 		var frac := clampf(float(my_hp) / MAX_HP, 0.0, 1.0)
 		_hp_fill.size = Vector2(200.0 * frac, 14.0)
@@ -255,6 +257,8 @@ func _input(event: InputEvent) -> void:
 			Input.mouse_mode = Input.MOUSE_MODE_VISIBLE if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED else Input.MOUSE_MODE_CAPTURED
 		elif event.keycode >= KEY_1 and event.keycode <= KEY_5:
 			_select_loadout(LOADOUTS[event.keycode - KEY_1])
+		elif event.keycode == KEY_F and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED and my_alive:
+			_slot2_at_aim()
 
 # ---- actions ---------------------------------------------------------------
 func _fire() -> void:
@@ -283,6 +287,23 @@ func _signature_at_aim() -> void:
 		Net.server.handle_signature_intent(1, origin, dir, tx, ty)
 	else:
 		Net.submit_signature.rpc_id(1, origin, dir, tx, ty)
+
+func _slot2_at_aim() -> void:
+	var origin := camera.global_position
+	var dir := -camera.global_transform.basis.z
+	var tx := -1
+	var ty := -1
+	if dir.y < -0.001:
+		var hit := origin + dir * (-origin.y / dir.y)
+		var itx := int(hit.x / TILE)
+		var ity := int(hit.z / TILE)
+		if grid.in_bounds(itx, ity):
+			tx = itx
+			ty = ity
+	if is_host and Net.server:
+		Net.server.handle_slot2_intent(1, origin, dir, tx, ty)
+	else:
+		Net.submit_slot2.rpc_id(1, origin, dir, tx, ty)
 
 func _select_loadout(id: String) -> void:
 	my_loadout = id
@@ -343,7 +364,7 @@ func apply_tile_delta(deltas: PackedByteArray) -> void:
 		var own := deltas[i + 2]
 		var typ := deltas[i + 3]
 		grid.apply_replicated(x, y, own, typ)
-		floor_mm.multimesh.set_instance_color(grid.idx(x, y), _owner_color(own))
+		floor_mm.multimesh.set_instance_color(grid.idx(x, y), _tile_color(own, typ))
 		i += 4
 
 func load_full_grid(owner_bytes: PackedByteArray, type_bytes: PackedByteArray, w: int, h: int) -> void:
@@ -352,7 +373,7 @@ func load_full_grid(owner_bytes: PackedByteArray, type_bytes: PackedByteArray, w
 	grid.load_snapshot(owner_bytes, type_bytes, w, h)
 	if floor_mm != null:
 		for idx in grid.w * grid.h:
-			floor_mm.multimesh.set_instance_color(idx, _owner_color(grid.owner[idx]))
+			floor_mm.multimesh.set_instance_color(idx, _tile_color(grid.owner[idx], grid.type[idx]))
 
 # ---- combat feedback (called by Net) ---------------------------------------
 func show_tracer(shooter_id: int, a: Vector3, b: Vector3) -> void:
@@ -427,6 +448,18 @@ func _owner_color(o: int) -> Color:
 		1: return Color(0.16, 0.38, 0.85)
 		2: return Color(0.85, 0.22, 0.22)
 		_: return Color(0.13, 0.14, 0.17)
+
+func _tile_color(owner: int, type_code: int) -> Color:
+	var base := _owner_color(owner)
+	if type_code == 0:
+		return base
+	var tint := Color(1, 1, 1)
+	match Defs.tile_type_by_code.get(type_code, "normal"):
+		"shock": tint = Color(0.95, 0.85, 0.20)
+		"mine": tint = Color(0.95, 0.45, 0.10)
+		"heal": tint = Color(0.30, 0.90, 0.50)
+		"slow": tint = Color(0.30, 0.70, 0.95)
+	return base.lerp(tint, 0.55)
 
 func _team_color(team: int) -> Color:
 	return Color(0.30, 0.55, 1.0) if team == 0 else Color(1.0, 0.4, 0.4)

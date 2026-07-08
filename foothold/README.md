@@ -32,12 +32,15 @@ uses no textures/shadows — it should run on integrated graphics.
 ## Controls
 - **WASD** move · **mouse** look
 - **hold left mouse** = primary weapon · **right mouse** = signature ability
+- **F** = slot-2 ability (lay a special tile on your own ground)
 - **1–5** switch class (Assault / Painter / Utility / Explosive / Wizard) — respawns you
 - **Esc** release/recapture the mouse
 
-Your primary and signature depend on your class. Painter's signature is Paint;
+Your abilities depend on your class. Painter's signature is Paint;
 Assault/Explosive/Wizard lob an area blast; Utility's deployable is a no-op stub
-until the entity system lands.
+until the entity system lands. Slot-2 (**F**) lays a special tile on ground you
+own — Painter mines, Utility heal, Explosive shock, Wizard slow — which then
+affect players who stand on them.
 
 Painting spends your team's shared token pool (neutral tile = 1, enemy tile = 2).
 Shooting deals damage; at 0 HP you die, a killfeed line appears, and you respawn
@@ -72,6 +75,12 @@ over the wire from the server.
   paint cost). **Adding a 6th class is one new file, zero code** — that's the
   Milestone 5 acceptance test. The five distinct primaries are all the *same*
   `Damage` primitive with different numbers.
+- **The tile-type catalog is live.** Shock (DoT), Mine (detonate-on-enter),
+  Heal (regen), and Slow (movement) are placed via the same mutation path (a new
+  `SetTileType` primitive), rendered by blending owner + type color, and processed
+  server-side. Hazard kills are credited to the tile's placer through the
+  `type_setter` attribution array — so a mine kill counts for whoever laid it,
+  even after they die or disconnect.
 - **Data-driven content.** Tile types, abilities, loadouts, and modes are JSON in
   `content/`, loaded at startup by `Defs`.
 
@@ -96,9 +105,11 @@ content/                tile_types / abilities / loadouts / modes  (data)
 - **Token pickups** — pools start pre-filled so painting is testable now; world
   token entities are Milestone 4.
 - **Deployables & remaining primitives** — `SpawnEntity` (turrets, the Utility
-  signature), `ApplyStatus` (slow/shock tiles), and `Displace` (knockback) have no
-  executors yet; abilities using them run as harmless no-ops. Secondary-weapon and
-  ability-slot-2 bindings aren't wired to input yet either.
+  signature) and `Displace` (knockback) have no executors yet; abilities using them
+  run as harmless no-ops. Deployables need a server-side entity system (turrets that
+  tick and auto-fire) — the natural next slice.
+- **Destructible tiles** — shock/cover tiles carry `health` in the catalog, but the
+  `Damage` primitive doesn't yet damage tiles (Demolition passive is inert until then).
 - **Ammo / reload** — weapons are cooldown-gated with infinite ammo.
 - **Client-side prediction/reconciliation** — the local player predicts its own
   movement naively; remote players render straight from 20 Hz snapshots. Proper
@@ -123,7 +134,11 @@ Please sanity-check these on your first F5 and tell me what breaks:
    changes (Explosive's rocket is slow/hard-hitting; Painter's SMG is fast; Sprint
    makes Assault faster). Right-click as Assault/Explosive/Wizard drops an area
    blast (orange sphere); as Painter it paints.
-7. `godot --headless -- --server` prints "headless server up" and a client can join it.
+7. **Tiles** (needs two players): as Painter paint a patch, press **F** to lay a
+   mine on it (tile tints orange); when an enemy walks onto it, it detonates
+   (orange sphere) and the killfeed credits you. Try Utility heal (stand on your
+   green tile → HP regens) and Wizard slow (enemy on your cyan tile moves slower).
+8. `godot --headless -- --server` prints "headless server up" and a client can join it.
 
 Likely first-run nits to watch for (untested code): MultiMesh per-instance color
 in the Compatibility renderer, `Vector3` RPC args over the wire, and

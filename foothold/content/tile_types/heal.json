@@ -1,0 +1,9 @@
+{
+  "id": "heal",
+  "code": 3,
+  "name": "Heal",
+  "effect": "regen",
+  "amount": 12,
+  "targets": "friendly",
+  "destructible": false
+}

@@ -37,6 +37,7 @@ var respawn_delay := 5.0
 var _next_slot := 0
 var _net_acc := 0.0
 var _terr_acc := 0.0
+var _tile_acc := 0.0
 var _pending := PackedByteArray()
 var _ended := false
 
@@ -83,6 +84,7 @@ func add_player(id: int) -> void:
 		"cooldowns": {}, "damage_log": [],
 		"loadout": DEFAULT_LOADOUT,
 		"move_speed": MOVE_SPEED, "paint_cd_mult": 1.0, "paint_cost_delta": 0,
+		"last_tile": Vector2i(-999, -999),
 	}
 	_apply_loadout(players[id])
 	EventBus.publish(Events.PLAYER_SPAWNED, {"id": id, "team": team, "slot": slot})
@@ -135,6 +137,13 @@ func handle_signature_intent(id: int, origin: Vector3, dir: Vector3, tx: int, ty
 	if sig != "":
 		use_ability(id, sig, {"origin": origin, "dir": dir, "tile": Vector2i(tx, ty)})
 
+func handle_slot2_intent(id: int, origin: Vector3, dir: Vector3, tx: int, ty: int) -> void:
+	if not players.has(id):
+		return
+	var a2: String = Defs.loadouts.get(players[id]["loadout"], {}).get("slot2", "")
+	if a2 != "":
+		use_ability(id, a2, {"origin": origin, "dir": dir, "tile": Vector2i(tx, ty)})
+
 # ---- the one ability pipeline (TA §7) --------------------------------------
 func use_ability(caster_id: int, ability_id: String, target: Dictionary) -> void:
 	if not players.has(caster_id):
@@ -166,6 +175,8 @@ func _run_effect(eff: Dictionary, caster_id: int, p: Dictionary, target: Diction
 	match eff.get("op", ""):
 		"SetTileOwner":
 			return _eff_set_tile_owner(caster_id, p, target)
+		"SetTileType":
+			return _eff_set_tile_type(caster_id, p, target, eff, ab)
 		"Damage":
 			return _eff_damage(caster_id, p, target, eff, ab)
 		"AreaDamage":
@@ -196,6 +207,27 @@ func _eff_set_tile_owner(caster_id: int, p: Dictionary, target: Dictionary) -> b
 	team_pool[team] = int(team_pool[team]) - cost
 	EventBus.publish(Events.RESOURCE_SPENT, {"team": team, "amount": cost, "sink": "paint"})
 	grid.apply(tile.x, tile.y, mine, -1, 0, {"kind": "ability", "actor": p["slot"], "ref": "paint"})
+	return true
+
+# Place a special tile type (shock/mine/heal/slow) on friendly ground. Same
+# mutation path as paint, so attribution (type_setter) records the placer.
+func _eff_set_tile_type(caster_id: int, p: Dictionary, target: Dictionary, eff: Dictionary, ab: Dictionary) -> bool:
+	var tile: Vector2i = target.get("tile", Vector2i(-1, -1))
+	if not grid.in_bounds(tile.x, tile.y):
+		return false
+	var team: int = p["team"]
+	if grid.owner_at(tile.x, tile.y) != team + 1:   # requirement: target_friendly_tile
+		_deny(caster_id, "must target your own tile")
+		return false
+	var cost := int(ab.get("cost", {}).get("tokens", 0))
+	if int(team_pool.get(team, 0)) < cost:
+		_deny(caster_id, "not enough tokens (%d/%d)" % [team_pool.get(team, 0), cost])
+		return false
+	var code := Defs.code_of(String(eff.get("type", "normal")))
+	if int(team_pool[team]) >= cost:
+		team_pool[team] = int(team_pool[team]) - cost
+		EventBus.publish(Events.RESOURCE_SPENT, {"team": team, "amount": cost, "sink": ab.get("id", "place")})
+	grid.apply(tile.x, tile.y, -1, code, 0, {"kind": "ability", "actor": p["slot"], "ref": ab.get("id", "place")})
 	return true
 
 func _eff_damage(caster_id: int, p: Dictionary, target: Dictionary, eff: Dictionary, ab: Dictionary) -> bool:
@@ -324,8 +356,9 @@ func _kill(victim_id: int, source: Dictionary) -> void:
 		"victim": victim_id, "killer": source["id"], "assists": assists,
 		"cause": source["ref"], "position": v["pos"],
 	})
-	var line := "%s peer%d  ▸  %s peer%d  [%s]%s" % [
-		_team_name(source["team"]), source["id"],
+	var killer_label := ("peer%d" % source["id"]) if int(source["id"]) >= 0 else "hazard"
+	var line := "%s %s  ▸  %s peer%d  [%s]%s" % [
+		_team_name(source["team"]), killer_label,
 		_team_name(v["team"]), victim_id, source["ref"], painter_note]
 	Net.push_killfeed.rpc(line)
 	v["damage_log"].clear()
@@ -340,17 +373,50 @@ func _respawn(id: int) -> void:
 # ---- simulation tick -------------------------------------------------------
 func _physics_process(delta: float) -> void:
 	match_time += delta
-	for id in players:
+	_tile_acc += delta
+	var do_tile_tick := _tile_acc >= 0.5
+	if do_tile_tick:
+		_tile_acc = 0.0
+
+	for id in players.keys():
 		var p: Dictionary = players[id]
 		if not p["alive"]:
 			if match_time >= float(p["respawn_at"]):
 				_respawn(id)
 			continue
+
+		# --- movement, with Slow fields applied ---
+		var cur := _tile_of(p["pos"])
+		var speed := float(p.get("move_speed", MOVE_SPEED))
+		var here := _tile_def_at(cur)
+		if here.get("effect", "") == "slow" and p["team"] != _tile_owner_team(cur):
+			speed *= float(here.get("factor", 0.5))
 		var wish: Vector2 = p["input"]
 		if wish != Vector2.ZERO:
-			p["pos"] += Vector3(wish.x, 0.0, wish.y) * float(p.get("move_speed", MOVE_SPEED)) * delta
+			p["pos"] += Vector3(wish.x, 0.0, wish.y) * speed * delta
 			p["pos"].x = clampf(p["pos"].x, 0.5, world_w - 0.5)
 			p["pos"].z = clampf(p["pos"].z, 0.5, world_h - 0.5)
+			cur = _tile_of(p["pos"])
+
+		# --- Mine: detonate on first entry onto an enemy-owned mine tile ---
+		if cur != p["last_tile"]:
+			p["last_tile"] = cur
+			var d := _tile_def_at(cur)
+			if d.get("effect", "") == "detonate_on_enter" and p["team"] != _tile_owner_team(cur) and _tile_owner_team(cur) >= 0:
+				_detonate_mine(cur.x, cur.y)
+
+		# --- Shock (DoT) / Heal (regen), every 0.5s ---
+		if do_tile_tick and players.has(id) and p["alive"]:
+			var t := _tile_of(p["pos"])
+			var def := _tile_def_at(t)
+			var owner_team := _tile_owner_team(t)
+			match def.get("effect", ""):
+				"damage_over_time":
+					if owner_team >= 0 and p["team"] != owner_team:
+						_apply_damage(id, int(def.get("amount", 8)), _hazard_source(t, "shock"))
+				"regen":
+					if owner_team >= 0 and p["team"] == owner_team:
+						p["hp"] = mini(MAX_HP, int(p["hp"]) + int(def.get("amount", 12)))
 
 	_net_acc += delta
 	if _net_acc >= NET_DT:
@@ -410,6 +476,46 @@ func _on_tile_changed(p: Dictionary) -> void:
 func _deny(id: int, reason: String) -> void:
 	EventBus.publish(Events.ABILITY_DENIED, {"player": id, "reason": reason})
 	Net.push_event.rpc_id(id, "AbilityDenied", reason)
+
+# ---- tile-effect helpers ---------------------------------------------------
+func _tile_of(pos: Vector3) -> Vector2i:
+	return Vector2i(int(pos.x / TILE), int(pos.z / TILE))
+
+func _tile_def_at(t: Vector2i) -> Dictionary:
+	if not grid.in_bounds(t.x, t.y):
+		return {}
+	var code: int = grid.type[grid.idx(t.x, t.y)]
+	return Defs.tile_types.get(Defs.tile_type_by_code.get(code, "normal"), {})
+
+func _tile_owner_team(t: Vector2i) -> int:
+	if not grid.in_bounds(t.x, t.y):
+		return -1
+	return int(grid.owner[grid.idx(t.x, t.y)]) - 1   # -1 when neutral
+
+func _id_for_slot(slot: int) -> int:
+	for id in players:
+		if int(players[id]["slot"]) == slot:
+			return id
+	return -1
+
+# Credit for a tile hazard goes to whoever set that tile's type (the placer),
+# read straight from the attribution array — valid even if they've disconnected.
+func _hazard_source(t: Vector2i, ref: String) -> Dictionary:
+	var slot: int = grid.type_setter[grid.idx(t.x, t.y)]
+	return {"id": _id_for_slot(slot), "slot": slot, "team": _tile_owner_team(t), "ref": ref}
+
+func _detonate_mine(tx: int, ty: int) -> void:
+	var def := _tile_def_at(Vector2i(tx, ty))
+	var center := Vector3((tx + 0.5) * TILE, 0.5, (ty + 0.5) * TILE)
+	var radius := float(def.get("radius", 3))
+	var dmg := int(def.get("amount", 90))
+	var src := _hazard_source(Vector2i(tx, ty), "mine")
+	Net.push_blast.rpc(center, radius)
+	for id in players.keys():
+		var t: Dictionary = players[id]
+		if t["alive"] and t["team"] != src["team"] and (t["pos"] + Vector3(0.0, 0.9, 0.0)).distance_to(center) <= radius:
+			_apply_damage(id, dmg, src)
+	grid.apply(tx, ty, -1, 0, 0, {"kind": "environment", "actor": -1, "ref": "mine_spent"})  # consumed
 
 func _team_name(team: int) -> String:
 	return TEAM_NAMES[team] if team < TEAM_NAMES.size() else str(team)

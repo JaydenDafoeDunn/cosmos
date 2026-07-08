@@ -48,13 +48,18 @@ func _load_folder(folder: String, into: Dictionary) -> void:
 		into[parsed["id"]] = parsed
 
 func _assign_tile_codes() -> void:
+	# Prefer the explicit "code" pinned in each asset so client and server always
+	# agree (and saved maps stay stable); fall back to load order otherwise.
 	var next := 1
 	for id in tile_types.keys():
+		var c := int(tile_types[id].get("code", -1))
 		if id == "normal":
-			continue
-		tile_type_code[id] = next
-		tile_type_by_code[next] = id
-		next += 1
+			c = 0
+		elif c < 0:
+			c = next
+			next += 1
+		tile_type_code[id] = c
+		tile_type_by_code[c] = id
 
 func code_of(tile_type_id: String) -> int:
 	return int(tile_type_code.get(tile_type_id, 0))

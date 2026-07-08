@@ -4,5 +4,6 @@
   "primary": "energy_beam",
   "secondary": "smg",
   "signature": "area_blast",
+  "slot2": "place_slow",
   "passive": "improved_token_efficiency"
 }

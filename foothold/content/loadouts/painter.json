@@ -4,5 +4,6 @@
   "primary": "smg",
   "secondary": "smg",
   "signature": "paint",
+  "slot2": "place_mine",
   "passive": "faster_painting"
 }

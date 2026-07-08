@@ -1,8 +1,10 @@
 {
   "id": "mine",
+  "code": 2,
   "name": "Mine",
   "effect": "detonate_on_enter",
   "amount": 90,
+  "radius": 3,
   "targets": "enemy",
   "consumed": true,
   "destructible": true,

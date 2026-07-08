@@ -1,5 +1,6 @@
 {
   "id": "normal",
+  "code": 0,
   "name": "Normal",
   "effect": "none",
   "destructible": false
