@@ -1,0 +1,8 @@
+{
+  "id": "utility_tool",
+  "name": "Utility Tool",
+  "targeting": "direction",
+  "range": 45,
+  "cooldown": 0.15,
+  "effects": [{ "op": "Damage", "target": "hitscan", "amount": 14, "falloff": true }]
+}

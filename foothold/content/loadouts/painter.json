@@ -1,7 +1,8 @@
 {
   "id": "painter",
   "name": "Painter",
-  "primary": "shoot",
+  "primary": "smg",
+  "secondary": "smg",
   "signature": "paint",
   "passive": "faster_painting"
 }

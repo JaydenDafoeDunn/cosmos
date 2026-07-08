@@ -1,0 +1,8 @@
+{
+  "id": "utility",
+  "name": "Utility",
+  "primary": "utility_tool",
+  "secondary": "smg",
+  "signature": "deploy",
+  "passive": "reduced_utility_cost"
+}

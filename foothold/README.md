@@ -31,15 +31,20 @@ uses no textures/shadows — it should run on integrated graphics.
 
 ## Controls
 - **WASD** move · **mouse** look
-- **hold left mouse** = fire the rifle (hitscan) · **right mouse** = paint the aimed tile
+- **hold left mouse** = primary weapon · **right mouse** = signature ability
+- **1–5** switch class (Assault / Painter / Utility / Explosive / Wizard) — respawns you
 - **Esc** release/recapture the mouse
+
+Your primary and signature depend on your class. Painter's signature is Paint;
+Assault/Explosive/Wizard lob an area blast; Utility's deployable is a no-op stub
+until the entity system lands.
 
 Painting spends your team's shared token pool (neutral tile = 1, enemy tile = 2).
 Shooting deals damage; at 0 HP you die, a killfeed line appears, and you respawn
 after the mode's delay. The bottom-left event log and top-right killfeed both come
 over the wire from the server.
 
-## What this slice proves (Milestone 0 → 3)
+## What this slice proves (Milestone 0 → 5)
 - **Client/server split from line one.** The host runs a `GameServer` *and* a
   `GameClient` — two separate `TileGrid`s in one process, synced only by network
   deltas, exactly as a remote client would be. No gameplay state is client-owned.
@@ -60,6 +65,13 @@ over the wire from the server.
   in `main/main.gd` to `"team_deathmatch"` and painting turns off while the win
   condition becomes kills — **config only, zero code**. That's the architecture's
   acceptance test.
+- **Classes are data (design doc §8).** The five presets are JSON in
+  `content/loadouts` — slot assignments + a passive. The engine has no notion of
+  "Assault"; a class picks which abilities fill which slots and derives stat
+  modifiers (Sprint → speed, Faster Painting → paint cooldown, Token Efficiency →
+  paint cost). **Adding a 6th class is one new file, zero code** — that's the
+  Milestone 5 acceptance test. The five distinct primaries are all the *same*
+  `Damage` primitive with different numbers.
 - **Data-driven content.** Tile types, abilities, loadouts, and modes are JSON in
   `content/`, loaded at startup by `Defs`.
 
@@ -83,11 +95,11 @@ content/                tile_types / abilities / loadouts / modes  (data)
   flat plane and only the arena walls block the camera visually (not movement).
 - **Token pickups** — pools start pre-filled so painting is testable now; world
   token entities are Milestone 4.
-- **Ammo / reload, more effect primitives** — shooting is cooldown-gated with
-  infinite ammo; `SpawnEntity`, `ApplyStatus`, `Displace`, etc. come with mines,
-  grenades, and deployables.
-- **Loadouts wired to input** — the five presets exist as data (`content/loadouts`)
-  but everyone currently spawns with the same rifle+paint; slot binding is Milestone 5.
+- **Deployables & remaining primitives** — `SpawnEntity` (turrets, the Utility
+  signature), `ApplyStatus` (slow/shock tiles), and `Displace` (knockback) have no
+  executors yet; abilities using them run as harmless no-ops. Secondary-weapon and
+  ability-slot-2 bindings aren't wired to input yet either.
+- **Ammo / reload** — weapons are cooldown-gated with infinite ammo.
 - **Client-side prediction/reconciliation** — the local player predicts its own
   movement naively; remote players render straight from 20 Hz snapshots. Proper
   netcode hardening is Milestone 6.
@@ -105,9 +117,13 @@ Please sanity-check these on your first F5 and tell me what breaks:
 4. Two instances: window 2's **Join** connects; each sees the other's capsule move;
    paints from either appear in both.
 5. **Combat** (needs two players): hold **left mouse** at the other capsule — you
-   see a tracer, the crosshair flashes on hit, their HP bar isn't shown but they
-   die after ~6 hits, a killfeed line appears, and they respawn.
-6. `godot --headless -- --server` prints "headless server up" and a client can join it.
+   see a tracer, the crosshair flashes on hit, they die after several hits, a
+   killfeed line appears, and they respawn.
+6. **Classes**: press **1–5** — the class label updates, you respawn, and the feel
+   changes (Explosive's rocket is slow/hard-hitting; Painter's SMG is fast; Sprint
+   makes Assault faster). Right-click as Assault/Explosive/Wizard drops an area
+   blast (orange sphere); as Painter it paints.
+7. `godot --headless -- --server` prints "headless server up" and a client can join it.
 
 Likely first-run nits to watch for (untested code): MultiMesh per-instance color
 in the Compatibility renderer, `Vector3` RPC args over the wire, and

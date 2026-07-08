@@ -21,6 +21,7 @@ const EYE := 1.6
 const NET_DT := 0.05         # 20 Hz state broadcast
 const TERR_DT := 1.0         # 1 Hz territory / score readout
 const TEAM_NAMES := ["A", "B", "C", "D"]
+const DEFAULT_LOADOUT := "painter"
 
 var grid: TileGrid
 var rules: Rules
@@ -80,9 +81,32 @@ func add_player(id: int) -> void:
 		"team": team, "slot": slot,
 		"hp": MAX_HP, "alive": true, "respawn_at": 0.0,
 		"cooldowns": {}, "damage_log": [],
+		"loadout": DEFAULT_LOADOUT,
+		"move_speed": MOVE_SPEED, "paint_cd_mult": 1.0, "paint_cost_delta": 0,
 	}
+	_apply_loadout(players[id])
 	EventBus.publish(Events.PLAYER_SPAWNED, {"id": id, "team": team, "slot": slot})
 	Net.push_event.rpc("PlayerSpawned", "peer %d joined — Team %s" % [id, _team_name(team)])
+
+# Classes are DATA (design doc §8): a loadout is slot assignments + a passive.
+# Applying one derives stat modifiers; the engine has no notion of "Assault".
+func set_loadout(id: int, loadout_id: String) -> void:
+	if not players.has(id) or not Defs.loadouts.has(loadout_id):
+		return
+	players[id]["loadout"] = loadout_id
+	_apply_loadout(players[id])
+	_respawn(id)
+	Net.push_event.rpc("Loadout", "peer %d → %s" % [id, Defs.loadouts[loadout_id].get("name", loadout_id)])
+
+func _apply_loadout(p: Dictionary) -> void:
+	p["move_speed"] = MOVE_SPEED
+	p["paint_cd_mult"] = 1.0
+	p["paint_cost_delta"] = 0
+	match Defs.loadouts.get(p["loadout"], {}).get("passive", ""):
+		"sprint": p["move_speed"] = MOVE_SPEED * 1.4
+		"faster_painting": p["paint_cd_mult"] = 0.5
+		"improved_token_efficiency": p["paint_cost_delta"] = -1
+		# "reduced_utility_cost" / "demolition": no effect until utilities / tile HP exist
 
 func _spawn_pos(team: int, slot: int) -> Vector3:
 	var margin := 8.0
@@ -99,7 +123,17 @@ func handle_paint_intent(id: int, x: int, y: int) -> void:
 	use_ability(id, "paint", {"tile": Vector2i(x, y)})
 
 func handle_fire_intent(id: int, origin: Vector3, dir: Vector3) -> void:
-	use_ability(id, "shoot", {"origin": origin, "dir": dir})
+	if not players.has(id):
+		return
+	var prim: String = Defs.loadouts.get(players[id]["loadout"], {}).get("primary", "assault_rifle")
+	use_ability(id, prim, {"origin": origin, "dir": dir})
+
+func handle_signature_intent(id: int, origin: Vector3, dir: Vector3, tx: int, ty: int) -> void:
+	if not players.has(id):
+		return
+	var sig: String = Defs.loadouts.get(players[id]["loadout"], {}).get("signature", "")
+	if sig != "":
+		use_ability(id, sig, {"origin": origin, "dir": dir, "tile": Vector2i(tx, ty)})
 
 # ---- the one ability pipeline (TA §7) --------------------------------------
 func use_ability(caster_id: int, ability_id: String, target: Dictionary) -> void:
@@ -120,7 +154,10 @@ func use_ability(caster_id: int, ability_id: String, target: Dictionary) -> void
 			ok = false
 			break
 	if ok:
-		p["cooldowns"][ability_id] = match_time + float(ab.get("cooldown", 0.1))
+		var cd := float(ab.get("cooldown", 0.1))
+		if ability_id == "paint":
+			cd *= float(p.get("paint_cd_mult", 1.0))   # Painter passive
+		p["cooldowns"][ability_id] = match_time + cd
 		EventBus.publish(Events.ABILITY_USED, {"player": caster_id, "ability": ability_id})
 
 # Each primitive has one server-side executor (TA §6.2). Returns false to abort
@@ -131,8 +168,10 @@ func _run_effect(eff: Dictionary, caster_id: int, p: Dictionary, target: Diction
 			return _eff_set_tile_owner(caster_id, p, target)
 		"Damage":
 			return _eff_damage(caster_id, p, target, eff, ab)
+		"AreaDamage":
+			return _eff_area_damage(caster_id, p, target, eff, ab)
 		_:
-			return true  # unknown op: no-op success (forward-compatible)
+			return true  # unknown op: no-op success (forward-compatible; e.g. SpawnEntity)
 
 func _eff_set_tile_owner(caster_id: int, p: Dictionary, target: Dictionary) -> bool:
 	if not rules.check("painting.enabled"):
@@ -150,7 +189,7 @@ func _eff_set_tile_owner(caster_id: int, p: Dictionary, target: Dictionary) -> b
 	if is_enemy and not rules.check("painting.enemy_tiles"):
 		_deny(caster_id, "cannot paint enemy tiles")
 		return false
-	var cost := int(rules.value("painting.cost_enemy" if is_enemy else "painting.cost_neutral"))
+	var cost := maxi(1, int(rules.value("painting.cost_enemy" if is_enemy else "painting.cost_neutral")) + int(p.get("paint_cost_delta", 0)))
 	if int(team_pool.get(team, 0)) < cost:
 		_deny(caster_id, "not enough tokens (%d/%d)" % [team_pool.get(team, 0), cost])
 		return false
@@ -203,6 +242,39 @@ func _hitscan(shooter_id: int, shooter_team: int, origin: Vector3, dir: Vector3,
 		best_t = tt
 		best_id = id
 	return {"id": best_id, "point": origin + dir * best_t, "dist": best_t}
+
+# Where an aimed "point" ability lands: the ground under the crosshair, else
+# capped at range along the aim ray.
+func _aim_point(origin: Vector3, dir: Vector3, max_dist: float) -> Vector3:
+	if dir.y < -0.001:
+		var t := -origin.y / dir.y
+		if t <= max_dist:
+			return origin + dir * t
+	return origin + dir * max_dist
+
+func _eff_area_damage(caster_id: int, p: Dictionary, target: Dictionary, eff: Dictionary, ab: Dictionary) -> bool:
+	var origin: Vector3 = target.get("origin", Vector3.ZERO)
+	var dir: Vector3 = target.get("dir", Vector3.FORWARD)
+	if dir.length() < 0.001:
+		return false
+	dir = dir.normalized()
+	var point := _aim_point(origin, dir, float(ab.get("range", 30.0)))
+	var radius := float(eff.get("radius", 4.0))
+	var dmg := int(eff.get("amount", 40))
+	Net.push_tracer.rpc(caster_id, origin, point)
+	Net.push_blast.rpc(point, radius)
+	var ff := rules.check("combat.friendly_fire")
+	for id in players.keys():
+		if id == caster_id:
+			continue
+		var t: Dictionary = players[id]
+		if not t["alive"]:
+			continue
+		if not ff and t["team"] == p["team"]:
+			continue
+		if (t["pos"] + Vector3(0.0, 0.9, 0.0)).distance_to(point) <= radius:
+			_apply_damage(id, dmg, {"id": caster_id, "slot": p["slot"], "team": p["team"], "ref": ab.get("id", "blast")})
+	return true
 
 # ---- damage / death / attribution (TA §8.1) --------------------------------
 func _apply_damage(victim_id: int, amount: int, source: Dictionary) -> void:
@@ -276,7 +348,7 @@ func _physics_process(delta: float) -> void:
 			continue
 		var wish: Vector2 = p["input"]
 		if wish != Vector2.ZERO:
-			p["pos"] += Vector3(wish.x, 0.0, wish.y) * MOVE_SPEED * delta
+			p["pos"] += Vector3(wish.x, 0.0, wish.y) * float(p.get("move_speed", MOVE_SPEED)) * delta
 			p["pos"].x = clampf(p["pos"].x, 0.5, world_w - 0.5)
 			p["pos"].z = clampf(p["pos"].z, 0.5, world_h - 0.5)
 

@@ -1,0 +1,8 @@
+{
+  "id": "wizard",
+  "name": "Wizard",
+  "primary": "energy_beam",
+  "secondary": "smg",
+  "signature": "area_blast",
+  "passive": "improved_token_efficiency"
+}

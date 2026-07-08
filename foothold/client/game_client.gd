@@ -3,20 +3,20 @@
 # in 3D greybox, sends INTENTS, predicts only the local player's movement and
 # its own weapon VFX (proper reconciliation is Milestone 6).
 #
-# Controls: WASD move · mouse look · HOLD LEFT = fire · RIGHT = paint · Esc mouse
+# Controls: WASD move · mouse look · HOLD LEFT = primary · RIGHT = signature
+#           1-5 pick class · Esc mouse
 # ============================================================================
 class_name GameClient
 extends Node3D
 
 const TILE := 2.0
 const EYE := 1.6
-const MOVE_SPEED := 7.0      # must match GameServer for clean prediction
+const MOVE_SPEED := 7.0      # base; loadout passive scales it (must match server)
 const MOUSE_SENS := 0.0025
 const SEND_DT := 0.05
-const FIRE_CD := 0.12        # must match the shoot ability cooldown
-const SHOOT_RANGE := 60.0
 const MAX_HP := 100.0
 const TEAM_NAMES := ["A", "B", "C", "D"]
+const LOADOUTS := ["assault", "painter", "utility", "explosive", "wizard"]
 
 var my_id := 0
 var is_host := false
@@ -26,11 +26,14 @@ var my_pos := Vector3.ZERO
 var my_team := 0
 var my_hp := 100
 var my_alive := true
+var my_loadout := "painter"
+var _primary_cd := 0.07      # fire interval, from the loadout's primary ability
+var _local_move_speed := MOVE_SPEED
 var yaw := 0.0
 var pitch := 0.0
 var _seeded := false
 
-var players: Dictionary = {}     # id -> {team, mesh}
+var players: Dictionary = {}
 var floor_mm: MultiMeshInstance3D
 var camera: Camera3D
 var world_w := 0.0
@@ -43,6 +46,7 @@ var _log: Array[String] = []
 var _killfeed: Array[String] = []
 
 var _status_label: Label
+var _class_label: Label
 var _log_label: Label
 var _killfeed_label: Label
 var _crosshair: Label
@@ -58,6 +62,7 @@ func start(id: int, host: bool) -> void:
 		grid.setup(64, 64, false)
 	world_w = grid.w * TILE
 	world_h = grid.h * TILE
+	_apply_local_loadout(my_loadout)
 	_build_world()
 	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 	log_event("Client", "%s started as peer %d" % ["HOST" if host else "CLIENT", id])
@@ -152,13 +157,18 @@ func _build_hud() -> void:
 	_killfeed_label.add_theme_font_size_override("font_size", 13)
 	layer.add_child(_killfeed_label)
 
+	_class_label = Label.new()
+	_class_label.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
+	_class_label.position = Vector2(12, -32)
+	_class_label.add_theme_font_size_override("font_size", 13)
+	layer.add_child(_class_label)
+
 	_log_label = Label.new()
 	_log_label.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
-	_log_label.position = Vector2(12, -160)
+	_log_label.position = Vector2(12, -190)
 	_log_label.add_theme_font_size_override("font_size", 12)
 	layer.add_child(_log_label)
 
-	# Health bar, bottom-center.
 	var hp_bg := ColorRect.new()
 	hp_bg.color = Color(0, 0, 0, 0.5)
 	hp_bg.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
@@ -200,10 +210,9 @@ func _process(delta: float) -> void:
 		if wish3.length() > 0.001:
 			wish3 = wish3.normalized()
 			wish = Vector2(wish3.x, wish3.z)
-			my_pos += Vector3(wish.x, 0.0, wish.y) * MOVE_SPEED * delta
+			my_pos += Vector3(wish.x, 0.0, wish.y) * _local_move_speed * delta
 			my_pos.x = clampf(my_pos.x, 0.5, world_w - 0.5)
 			my_pos.z = clampf(my_pos.z, 0.5, world_h - 0.5)
-		# hold-to-fire
 		if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) and _fire_cd <= 0.0:
 			_fire()
 
@@ -219,9 +228,12 @@ func _process(delta: float) -> void:
 
 func _update_hud() -> void:
 	if _status_label:
-		_status_label.text = "%s  peer %d  Team %s  players:%d\nWASD move · look · HOLD LMB fire · RMB paint · Esc" % [
+		_status_label.text = "%s  peer %d  Team %s  players:%d\nWASD · look · HOLD LMB primary · RMB signature · Esc" % [
 			"HOST" if is_host else "CLIENT", my_id,
 			TEAM_NAMES[my_team] if my_team < TEAM_NAMES.size() else str(my_team), _peer_count]
+	if _class_label:
+		var lo: Dictionary = Defs.loadouts.get(my_loadout, {})
+		_class_label.text = "CLASS: %s   [1 Assault  2 Painter  3 Utility  4 Explosive  5 Wizard]" % lo.get("name", my_loadout)
 	if _hp_fill:
 		var frac := clampf(float(my_hp) / MAX_HP, 0.0, 1.0)
 		_hp_fill.size = Vector2(200.0 * frac, 14.0)
@@ -237,35 +249,54 @@ func _input(event: InputEvent) -> void:
 		if event.button_index == MOUSE_BUTTON_LEFT and Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
 			Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 		elif event.button_index == MOUSE_BUTTON_RIGHT and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED and my_alive:
-			_paint_at_aim()
-	elif event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
-		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED else Input.MOUSE_MODE_CAPTURED
+			_signature_at_aim()
+	elif event is InputEventKey and event.pressed:
+		if event.keycode == KEY_ESCAPE:
+			Input.mouse_mode = Input.MOUSE_MODE_VISIBLE if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED else Input.MOUSE_MODE_CAPTURED
+		elif event.keycode >= KEY_1 and event.keycode <= KEY_5:
+			_select_loadout(LOADOUTS[event.keycode - KEY_1])
 
 # ---- actions ---------------------------------------------------------------
 func _fire() -> void:
-	_fire_cd = FIRE_CD
+	_fire_cd = _primary_cd
 	var origin := camera.global_position
 	var dir := -camera.global_transform.basis.z
-	show_tracer(my_id, origin, origin + dir * SHOOT_RANGE)  # predicted VFX
+	show_tracer(my_id, origin, origin + dir * 60.0)   # predicted VFX
 	if is_host and Net.server:
 		Net.server.handle_fire_intent(1, origin, dir)
 	else:
 		Net.submit_fire.rpc_id(1, origin, dir)
 
-func _paint_at_aim() -> void:
-	var from := camera.global_position
+func _signature_at_aim() -> void:
+	var origin := camera.global_position
 	var dir := -camera.global_transform.basis.z
-	if dir.y >= -0.001:
-		return
-	var t := -from.y / dir.y
-	var hit := from + dir * t
-	var tx := int(hit.x / TILE)
-	var ty := int(hit.z / TILE)
-	if grid.in_bounds(tx, ty):
-		if is_host and Net.server:
-			Net.server.handle_paint_intent(1, tx, ty)
-		else:
-			Net.submit_paint.rpc_id(1, tx, ty)
+	var tx := -1
+	var ty := -1
+	if dir.y < -0.001:
+		var hit := origin + dir * (-origin.y / dir.y)
+		var itx := int(hit.x / TILE)
+		var ity := int(hit.z / TILE)
+		if grid.in_bounds(itx, ity):
+			tx = itx
+			ty = ity
+	if is_host and Net.server:
+		Net.server.handle_signature_intent(1, origin, dir, tx, ty)
+	else:
+		Net.submit_signature.rpc_id(1, origin, dir, tx, ty)
+
+func _select_loadout(id: String) -> void:
+	my_loadout = id
+	_apply_local_loadout(id)
+	if is_host and Net.server:
+		Net.server.set_loadout(1, id)
+	else:
+		Net.submit_loadout.rpc_id(1, id)
+
+func _apply_local_loadout(id: String) -> void:
+	var lo: Dictionary = Defs.loadouts.get(id, {})
+	var prim: String = lo.get("primary", "assault_rifle")
+	_primary_cd = float(Defs.abilities.get(prim, {}).get("cooldown", 0.12))
+	_local_move_speed = MOVE_SPEED * (1.4 if lo.get("passive", "") == "sprint" else 1.0)
 
 func _send_input(wish: Vector2) -> void:
 	if is_host and Net.server:
@@ -287,7 +318,7 @@ func apply_snapshot(snap: Array) -> void:
 		if id == my_id:
 			my_hp = hp
 			if alive and not my_alive:
-				_seeded = false       # just respawned — re-adopt server spawn
+				_seeded = false
 			my_alive = alive
 			if not _seeded:
 				my_pos = pos
@@ -340,9 +371,24 @@ func show_tracer(shooter_id: int, a: Vector3, b: Vector3) -> void:
 	add_child(m)
 	var up := Vector3.UP
 	if absf((b - a).normalized().dot(up)) > 0.99:
-		up = Vector3.FORWARD   # avoid parallel up when firing near-vertical
+		up = Vector3.FORWARD
 	m.look_at_from_position((a + b) * 0.5, b, up)
 	get_tree().create_timer(0.06).timeout.connect(m.queue_free)
+
+func show_blast(point: Vector3, radius: float) -> void:
+	var m := MeshInstance3D.new()
+	var s := SphereMesh.new()
+	s.radius = radius
+	s.height = radius * 2.0
+	m.mesh = s
+	m.position = point
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.albedo_color = Color(1.0, 0.6, 0.2, 0.4)
+	m.material_override = mat
+	add_child(m)
+	get_tree().create_timer(0.18).timeout.connect(m.queue_free)
 
 func show_hitmarker() -> void:
 	_hit_flash = 0.12

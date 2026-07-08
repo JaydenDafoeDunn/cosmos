@@ -1,0 +1,9 @@
+{
+  "id": "deploy",
+  "name": "Deploy Turret",
+  "targeting": "tile",
+  "range": 6,
+  "cooldown": 3.0,
+  "_note": "STUB: SpawnEntity has no executor yet — deployables arrive with the entity system (Milestone 5b). Runs harmlessly as a no-op for now.",
+  "effects": [{ "op": "SpawnEntity", "what": "turret", "where": "tile" }]
+}

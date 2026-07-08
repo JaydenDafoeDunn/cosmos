@@ -1,0 +1,8 @@
+{
+  "id": "explosive",
+  "name": "Explosive",
+  "primary": "rocket_launcher",
+  "secondary": "smg",
+  "signature": "breaching",
+  "passive": "demolition"
+}

@@ -49,11 +49,28 @@ func push_event(name: String, text: String) -> void:
 	if client:
 		client.log_event(name, text)
 
+# ---- loadout selection ----
+@rpc("any_peer", "call_remote", "reliable")
+func submit_loadout(loadout_id: String) -> void:
+	if server:
+		server.set_loadout(multiplayer.get_remote_sender_id(), loadout_id)
+
 # ---- combat ----
 @rpc("any_peer", "call_remote", "reliable")
 func submit_fire(origin: Vector3, dir: Vector3) -> void:
 	if server:
 		server.handle_fire_intent(multiplayer.get_remote_sender_id(), origin, dir)
+
+@rpc("any_peer", "call_remote", "reliable")
+func submit_signature(origin: Vector3, dir: Vector3, tx: int, ty: int) -> void:
+	if server:
+		server.handle_signature_intent(multiplayer.get_remote_sender_id(), origin, dir, tx, ty)
+
+# Area-effect blast VFX for everyone.
+@rpc("authority", "call_local", "unreliable")
+func push_blast(point: Vector3, radius: float) -> void:
+	if client:
+		client.show_blast(point, radius)
 
 # Tracer VFX for everyone (the shooter already drew its own, predicted).
 @rpc("authority", "call_local", "unreliable")
