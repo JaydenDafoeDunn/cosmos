@@ -2,7 +2,6 @@
   "id": "assault",
   "name": "Assault",
   "primary": "assault_rifle",
-  "secondary": "smg",
-  "signature": "grenade",
-  "passive": "sprint"
+  "passive": "sprint",
+  "specializations": ["grenade"]
 }

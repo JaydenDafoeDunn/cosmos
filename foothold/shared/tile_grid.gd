@@ -31,6 +31,7 @@ var type: PackedByteArray = PackedByteArray()
 var health: PackedByteArray = PackedByteArray()
 var owner_setter: PackedByteArray = PackedByteArray()
 var type_setter: PackedByteArray = PackedByteArray()
+var disabled: PackedByteArray = PackedByteArray()   # 1 = locked/sabotaged (no effect, no territory)
 
 # Incrementally maintained ownership tally -> O(1) Territory Control win check.
 var owner_counts: Dictionary = {}   # owner_byte -> count
@@ -47,6 +48,7 @@ func setup(width: int, height: int, is_server: bool) -> void:
 		health = PackedByteArray(); health.resize(n)
 		owner_setter = PackedByteArray(); owner_setter.resize(n)
 		type_setter = PackedByteArray(); type_setter.resize(n)
+		disabled = PackedByteArray(); disabled.resize(n)
 		for i in n:
 			owner_setter[i] = SYSTEM
 			type_setter[i] = SYSTEM
@@ -76,7 +78,7 @@ func total_tiles() -> int:
 # cause = { "kind": "ability"|"objective"|"script"|"environment",
 #           "actor": <player_slot:int> | -1 (system), "ref": <def_id:String> }
 # Returns true if anything actually changed.
-func apply(x: int, y: int, set_owner: int, set_type: int, delta_health: int, cause: Dictionary) -> bool:
+func apply(x: int, y: int, set_owner: int, set_type: int, delta_health: int, cause: Dictionary, set_disabled: int = -1) -> bool:
 	if not in_bounds(x, y):
 		return false
 	var i := idx(x, y)
@@ -100,6 +102,10 @@ func apply(x: int, y: int, set_owner: int, set_type: int, delta_health: int, cau
 			type_setter[i] = setter
 		changed = true
 
+	if server_side and set_disabled >= 0 and disabled[i] != set_disabled:
+		disabled[i] = set_disabled
+		changed = true
+
 	if server_side and delta_health != 0:
 		health[i] = clampi(health[i] + delta_health, 0, 255)
 		changed = true
@@ -110,9 +116,13 @@ func apply(x: int, y: int, set_owner: int, set_type: int, delta_health: int, cau
 			"x": x, "y": y,
 			"owner": owner[i], "type": type[i],
 			"old_owner": old_owner, "old_type": old_type,
+			"disabled": (disabled[i] if server_side else 0),
 			"cause": cause,
 		})
 	return changed
+
+func is_disabled(x: int, y: int) -> bool:
+	return in_bounds(x, y) and server_side and disabled[idx(x, y)] == 1
 
 # --- Client-side delta application (no rules, no attribution, no event) -----
 # The client mirrors authoritative state; it never originates gameplay changes.

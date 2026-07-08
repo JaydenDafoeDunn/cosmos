@@ -1,22 +1,23 @@
 # ============================================================================
 # GameClient — presentation only (design doc §13). Renders authoritative state
-# in 3D greybox, sends INTENTS, predicts only the local player's movement and
-# its own weapon VFX (proper reconciliation is Milestone 6).
+# in 3D greybox, sends INTENTS, predicts only local movement + own weapon VFX.
 #
-# Controls: WASD move · mouse look · HOLD LEFT = primary · RIGHT = signature
-#           1-5 pick class · Esc mouse
+# Match flow: pick TWO classes (+ one specialization each) on the pre-match
+# screen, Lock In (frozen for the match), then play.
+# Controls: WASD move · mouse look · HOLD LMB = Class-A weapon ·
+#           RMB = Class-A ability · F = Class-B ability · Esc mouse
 # ============================================================================
 class_name GameClient
 extends Node3D
 
 const TILE := 2.0
 const EYE := 1.6
-const MOVE_SPEED := 7.0      # base; loadout passive scales it (must match server)
+const MOVE_SPEED := 7.0
 const MOUSE_SENS := 0.0025
 const SEND_DT := 0.05
 const MAX_HP := 100.0
 const TEAM_NAMES := ["A", "B", "C", "D"]
-const LOADOUTS := ["assault", "painter", "utility", "explosive", "wizard"]
+const CLASSES := ["assault", "painter", "utility", "explosive", "wizard", "healer", "saboteur"]
 
 var my_id := 0
 var is_host := false
@@ -26,18 +27,25 @@ var my_pos := Vector3.ZERO
 var my_team := 0
 var my_hp := 100
 var my_alive := true
-var my_loadout := "painter"
-var _primary_cd := 0.07      # fire interval, from the loadout's primary ability
-var _local_move_speed := MOVE_SPEED
 var yaw := 0.0
 var pitch := 0.0
 var _seeded := false
+
+# match-locked dual class
+var _locked := false
+var _classA := "painter"
+var _specA := "paint"
+var _classB := "assault"
+var _specB := "grenade"
+var _primary_cd := 0.12
+var _local_move_speed := MOVE_SPEED
 
 var players: Dictionary = {}
 var floor_mm: MultiMeshInstance3D
 var camera: Camera3D
 var world_w := 0.0
 var world_h := 0.0
+var _shield_panels: Dictionary = {}   # tile idx -> MeshInstance3D
 
 var _send_acc := 0.0
 var _fire_cd := 0.0
@@ -54,6 +62,15 @@ var _respawn_label: Label
 var _hp_fill: ColorRect
 var _peer_count := 0
 
+# selection UI
+var _select_layer: CanvasLayer
+var _ob_class_a: OptionButton
+var _ob_spec_a: OptionButton
+var _ob_class_b: OptionButton
+var _ob_spec_b: OptionButton
+var _specs_a: Array = []
+var _specs_b: Array = []
+
 func start(id: int, host: bool) -> void:
 	my_id = id
 	is_host = host
@@ -62,9 +79,10 @@ func start(id: int, host: bool) -> void:
 		grid.setup(64, 64, false)
 	world_w = grid.w * TILE
 	world_h = grid.h * TILE
-	_apply_local_loadout(my_loadout)
+	_apply_local_kit()
 	_build_world()
-	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+	_build_select_ui()
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE   # selection screen first
 	log_event("Client", "%s started as peer %d" % ["HOST" if host else "CLIENT", id])
 
 # ---- scene construction ----------------------------------------------------
@@ -190,6 +208,111 @@ func _build_hud() -> void:
 	_respawn_label.visible = false
 	layer.add_child(_respawn_label)
 
+func _build_select_ui() -> void:
+	_select_layer = CanvasLayer.new()
+	add_child(_select_layer)
+	var center := CenterContainer.new()
+	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_select_layer.add_child(center)
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 10)
+	center.add_child(box)
+
+	var title := Label.new()
+	title.text = "CHOOSE 2 CLASSES  (locked for the whole match)"
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.add_theme_font_size_override("font_size", 22)
+	box.add_child(title)
+
+	_ob_class_a = OptionButton.new()
+	_ob_spec_a = OptionButton.new()
+	_ob_class_b = OptionButton.new()
+	_ob_spec_b = OptionButton.new()
+	box.add_child(_row("Class A", _ob_class_a, _ob_spec_a))
+	box.add_child(_row("Class B", _ob_class_b, _ob_spec_b))
+
+	for c in CLASSES:
+		var cname: String = Defs.loadouts.get(c, {}).get("name", c)
+		_ob_class_a.add_item(cname)
+		_ob_class_b.add_item(cname)
+	_ob_class_a.select(CLASSES.find(_classA))
+	_ob_class_b.select(CLASSES.find(_classB))
+	_ob_class_a.item_selected.connect(_on_pick_class_a)
+	_ob_class_b.item_selected.connect(_on_pick_class_b)
+	_ob_spec_a.item_selected.connect(_on_pick_spec_a)
+	_ob_spec_b.item_selected.connect(_on_pick_spec_b)
+	_refresh_specs("a")
+	_refresh_specs("b")
+
+	var lock := Button.new()
+	lock.text = "LOCK IN"
+	lock.pressed.connect(_lock_in)
+	box.add_child(lock)
+
+func _row(label: String, a: OptionButton, b: OptionButton) -> HBoxContainer:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 8)
+	var l := Label.new()
+	l.text = label
+	l.custom_minimum_size = Vector2(70, 0)
+	row.add_child(l)
+	a.custom_minimum_size = Vector2(150, 0)
+	b.custom_minimum_size = Vector2(180, 0)
+	row.add_child(a)
+	row.add_child(b)
+	return row
+
+func _on_pick_class_a(i: int) -> void:
+	_classA = CLASSES[i]
+	_refresh_specs("a")
+
+func _on_pick_class_b(i: int) -> void:
+	_classB = CLASSES[i]
+	_refresh_specs("b")
+
+func _on_pick_spec_a(i: int) -> void:
+	if i < _specs_a.size():
+		_specA = _specs_a[i]
+
+func _on_pick_spec_b(i: int) -> void:
+	if i < _specs_b.size():
+		_specB = _specs_b[i]
+
+func _refresh_specs(which: String) -> void:
+	var cls := _classA if which == "a" else _classB
+	var ob := _ob_spec_a if which == "a" else _ob_spec_b
+	var specs: Array = Defs.loadouts.get(cls, {}).get("specializations", [])
+	ob.clear()
+	for s in specs:
+		ob.add_item(Defs.abilities.get(s, {}).get("name", s))
+	if specs.size() > 0:
+		ob.select(0)
+	if which == "a":
+		_specs_a = specs
+		_specA = specs[0] if specs.size() > 0 else ""
+	else:
+		_specs_b = specs
+		_specB = specs[0] if specs.size() > 0 else ""
+
+func _lock_in() -> void:
+	_apply_local_kit()
+	if is_host and Net.server:
+		Net.server.select_classes(1, _classA, _specA, _classB, _specB)
+	else:
+		Net.submit_selection.rpc_id(1, _classA, _specA, _classB, _specB)
+	_locked = true
+	if _select_layer:
+		_select_layer.queue_free()
+		_select_layer = null
+	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+
+func _apply_local_kit() -> void:
+	var ca: Dictionary = Defs.loadouts.get(_classA, {})
+	var cb: Dictionary = Defs.loadouts.get(_classB, {})
+	_primary_cd = float(Defs.abilities.get(ca.get("primary", "sidearm"), {}).get("cooldown", 0.15))
+	var sprint := ca.get("passive", "") == "sprint" or cb.get("passive", "") == "sprint"
+	_local_move_speed = MOVE_SPEED * (1.4 if sprint else 1.0)
+
 # ---- per-frame -------------------------------------------------------------
 func _process(delta: float) -> void:
 	if camera == null:
@@ -201,7 +324,7 @@ func _process(delta: float) -> void:
 			_crosshair.modulate = Color.WHITE
 
 	var wish := Vector2.ZERO
-	if my_alive:
+	if _locked and my_alive:
 		var fa := (1.0 if Input.is_physical_key_pressed(KEY_W) else 0.0) - (1.0 if Input.is_physical_key_pressed(KEY_S) else 0.0)
 		var ra := (1.0 if Input.is_physical_key_pressed(KEY_D) else 0.0) - (1.0 if Input.is_physical_key_pressed(KEY_A) else 0.0)
 		var fwd := Vector3(-sin(yaw), 0.0, -cos(yaw))
@@ -217,61 +340,57 @@ func _process(delta: float) -> void:
 			_fire()
 
 	_send_acc += delta
-	if _send_acc >= SEND_DT:
+	if _send_acc >= SEND_DT and _locked:
 		_send_acc = 0.0
 		_send_input(wish)
 
 	var b := Basis(Vector3.UP, yaw) * Basis(Vector3.RIGHT, pitch)
 	camera.transform = Transform3D(b, my_pos + Vector3(0.0, EYE, 0.0))
-
 	_update_hud()
 
 func _update_hud() -> void:
 	if _status_label:
-		_status_label.text = "%s  peer %d  Team %s  players:%d\nWASD · look · HOLD LMB primary · RMB signature · Esc" % [
+		_status_label.text = "%s  peer %d  Team %s  players:%d\nWASD · look · HOLD LMB weapon · RMB A-ability · F B-ability · Esc" % [
 			"HOST" if is_host else "CLIENT", my_id,
 			TEAM_NAMES[my_team] if my_team < TEAM_NAMES.size() else str(my_team), _peer_count]
 	if _class_label:
-		var lo: Dictionary = Defs.loadouts.get(my_loadout, {})
-		var sig_name: String = Defs.abilities.get(lo.get("signature", ""), {}).get("name", "—")
-		var s2_name: String = Defs.abilities.get(lo.get("slot2", ""), {}).get("name", "—")
-		_class_label.text = "CLASS: %s   RMB: %s   F: %s   [1-5 switch]" % [lo.get("name", my_loadout), sig_name, s2_name]
+		_class_label.text = "A: %s (%s)   B: %s (%s)" % [
+			Defs.loadouts.get(_classA, {}).get("name", _classA), Defs.abilities.get(_specA, {}).get("name", _specA),
+			Defs.loadouts.get(_classB, {}).get("name", _classB), Defs.abilities.get(_specB, {}).get("name", _specB)]
 	if _hp_fill:
 		var frac := clampf(float(my_hp) / MAX_HP, 0.0, 1.0)
 		_hp_fill.size = Vector2(200.0 * frac, 14.0)
 		_hp_fill.color = Color(0.3, 0.85, 0.4).lerp(Color(0.9, 0.25, 0.25), 1.0 - frac)
 	if _respawn_label:
-		_respawn_label.visible = not my_alive
+		_respawn_label.visible = _locked and not my_alive
 
 func _input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
 		yaw -= event.relative.x * MOUSE_SENS
 		pitch = clampf(pitch - event.relative.y * MOUSE_SENS, -1.4, 1.4)
-	elif event is InputEventMouseButton and event.pressed:
+	elif event is InputEventMouseButton and event.pressed and _locked:
 		if event.button_index == MOUSE_BUTTON_LEFT and Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
 			Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 		elif event.button_index == MOUSE_BUTTON_RIGHT and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED and my_alive:
-			_signature_at_aim()
+			_ability_at_aim(false)
 	elif event is InputEventKey and event.pressed:
 		if event.keycode == KEY_ESCAPE:
 			Input.mouse_mode = Input.MOUSE_MODE_VISIBLE if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED else Input.MOUSE_MODE_CAPTURED
-		elif event.keycode >= KEY_1 and event.keycode <= KEY_5:
-			_select_loadout(LOADOUTS[event.keycode - KEY_1])
-		elif event.keycode == KEY_F and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED and my_alive:
-			_slot2_at_aim()
+		elif event.keycode == KEY_F and _locked and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED and my_alive:
+			_ability_at_aim(true)
 
 # ---- actions ---------------------------------------------------------------
 func _fire() -> void:
 	_fire_cd = _primary_cd
 	var origin := camera.global_position
 	var dir := -camera.global_transform.basis.z
-	show_tracer(my_id, origin, origin + dir * 60.0)   # predicted VFX
+	show_tracer(my_id, origin, origin + dir * 60.0)
 	if is_host and Net.server:
 		Net.server.handle_fire_intent(1, origin, dir)
 	else:
 		Net.submit_fire.rpc_id(1, origin, dir)
 
-func _signature_at_aim() -> void:
+func _ability_at_aim(is_slot2: bool) -> void:
 	var origin := camera.global_position
 	var dir := -camera.global_transform.basis.z
 	var tx := -1
@@ -283,41 +402,16 @@ func _signature_at_aim() -> void:
 		if grid.in_bounds(itx, ity):
 			tx = itx
 			ty = ity
-	if is_host and Net.server:
-		Net.server.handle_signature_intent(1, origin, dir, tx, ty)
+	if is_slot2:
+		if is_host and Net.server:
+			Net.server.handle_slot2_intent(1, origin, dir, tx, ty)
+		else:
+			Net.submit_slot2.rpc_id(1, origin, dir, tx, ty)
 	else:
-		Net.submit_signature.rpc_id(1, origin, dir, tx, ty)
-
-func _slot2_at_aim() -> void:
-	var origin := camera.global_position
-	var dir := -camera.global_transform.basis.z
-	var tx := -1
-	var ty := -1
-	if dir.y < -0.001:
-		var hit := origin + dir * (-origin.y / dir.y)
-		var itx := int(hit.x / TILE)
-		var ity := int(hit.z / TILE)
-		if grid.in_bounds(itx, ity):
-			tx = itx
-			ty = ity
-	if is_host and Net.server:
-		Net.server.handle_slot2_intent(1, origin, dir, tx, ty)
-	else:
-		Net.submit_slot2.rpc_id(1, origin, dir, tx, ty)
-
-func _select_loadout(id: String) -> void:
-	my_loadout = id
-	_apply_local_loadout(id)
-	if is_host and Net.server:
-		Net.server.set_loadout(1, id)
-	else:
-		Net.submit_loadout.rpc_id(1, id)
-
-func _apply_local_loadout(id: String) -> void:
-	var lo: Dictionary = Defs.loadouts.get(id, {})
-	var prim: String = lo.get("primary", "assault_rifle")
-	_primary_cd = float(Defs.abilities.get(prim, {}).get("cooldown", 0.12))
-	_local_move_speed = MOVE_SPEED * (1.4 if lo.get("passive", "") == "sprint" else 1.0)
+		if is_host and Net.server:
+			Net.server.handle_signature_intent(1, origin, dir, tx, ty)
+		else:
+			Net.submit_signature.rpc_id(1, origin, dir, tx, ty)
 
 func _send_input(wish: Vector2) -> void:
 	if is_host and Net.server:
@@ -362,9 +456,16 @@ func apply_tile_delta(deltas: PackedByteArray) -> void:
 		var x := deltas[i]
 		var y := deltas[i + 1]
 		var own := deltas[i + 2]
-		var typ := deltas[i + 3]
-		grid.apply_replicated(x, y, own, typ)
-		floor_mm.multimesh.set_instance_color(grid.idx(x, y), _tile_color(own, typ))
+		var raw := deltas[i + 3]
+		var code := raw & 0x3F
+		var off := (raw & 0x40) != 0
+		grid.apply_replicated(x, y, own, code)
+		var idx := grid.idx(x, y)
+		var col := _tile_color(own, code)
+		if off:
+			col = col.lerp(Color(0.06, 0.06, 0.07), 0.6)
+		floor_mm.multimesh.set_instance_color(idx, col)
+		_set_shield_panel(idx, x, y, code == 5 and not off)
 		i += 4
 
 func load_full_grid(owner_bytes: PackedByteArray, type_bytes: PackedByteArray, w: int, h: int) -> void:
@@ -378,7 +479,7 @@ func load_full_grid(owner_bytes: PackedByteArray, type_bytes: PackedByteArray, w
 # ---- combat feedback (called by Net) ---------------------------------------
 func show_tracer(shooter_id: int, a: Vector3, b: Vector3) -> void:
 	if shooter_id == my_id:
-		return  # we already drew our own predicted tracer in _fire()
+		return
 	if a.distance_to(b) < 0.05:
 		return
 	var m := MeshInstance3D.new()
@@ -431,6 +532,23 @@ func log_event(_name: String, text: String) -> void:
 		_log_label.text = "\n".join(_log)
 
 # ---- helpers ---------------------------------------------------------------
+func _set_shield_panel(idx: int, tx: int, ty: int, on: bool) -> void:
+	if on and not _shield_panels.has(idx):
+		var m := MeshInstance3D.new()
+		var box := BoxMesh.new()
+		box.size = Vector3(TILE, 3.0, TILE)
+		m.mesh = box
+		m.position = Vector3((tx + 0.5) * TILE, 1.5, (ty + 0.5) * TILE)
+		var mat := StandardMaterial3D.new()
+		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		mat.albedo_color = Color(0.4, 0.8, 1.0, 0.25)
+		m.material_override = mat
+		add_child(m)
+		_shield_panels[idx] = m
+	elif not on and _shield_panels.has(idx):
+		_shield_panels[idx].queue_free()
+		_shield_panels.erase(idx)
+
 func _make_avatar(team: int) -> MeshInstance3D:
 	var m := MeshInstance3D.new()
 	var cap := CapsuleMesh.new()
@@ -459,6 +577,9 @@ func _tile_color(owner: int, type_code: int) -> Color:
 		"mine": tint = Color(0.95, 0.45, 0.10)
 		"heal": tint = Color(0.30, 0.90, 0.50)
 		"slow": tint = Color(0.30, 0.70, 0.95)
+		"shield": tint = Color(0.40, 0.80, 1.00)
+		"speed": tint = Color(0.85, 0.85, 0.30)
+		"stun": tint = Color(0.70, 0.35, 0.95)
 	return base.lerp(tint, 0.55)
 
 func _team_color(team: int) -> Color:

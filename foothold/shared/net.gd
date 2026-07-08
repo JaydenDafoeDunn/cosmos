@@ -49,11 +49,11 @@ func push_event(name: String, text: String) -> void:
 	if client:
 		client.log_event(name, text)
 
-# ---- loadout selection ----
+# ---- match-locked dual-class selection ----
 @rpc("any_peer", "call_remote", "reliable")
-func submit_loadout(loadout_id: String) -> void:
+func submit_selection(class_a: String, spec_a: String, class_b: String, spec_b: String) -> void:
 	if server:
-		server.set_loadout(multiplayer.get_remote_sender_id(), loadout_id)
+		server.select_classes(multiplayer.get_remote_sender_id(), class_a, spec_a, class_b, spec_b)
 
 # ---- combat ----
 @rpc("any_peer", "call_remote", "reliable")

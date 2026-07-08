@@ -2,8 +2,6 @@
   "id": "painter",
   "name": "Painter",
   "primary": "smg",
-  "secondary": "smg",
-  "signature": "paint",
-  "slot2": "place_mine",
-  "passive": "faster_painting"
+  "passive": "faster_painting",
+  "specializations": ["paint"]
 }

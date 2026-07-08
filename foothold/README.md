@@ -30,17 +30,21 @@ Low-end laptop: the project already forces the **GL Compatibility** renderer and
 uses no textures/shadows — it should run on integrated graphics.
 
 ## Controls
+At match start you pick **two classes** (+ one specialization each) on a screen,
+then **Lock In** — locked for the whole match (server-enforced).
 - **WASD** move · **mouse** look
-- **hold left mouse** = primary weapon · **right mouse** = signature ability
-- **F** = slot-2 ability (lay a special tile on your own ground)
-- **1–5** switch class (Assault / Painter / Utility / Explosive / Wizard) — respawns you
-- **Esc** release/recapture the mouse
+- **hold left mouse** = Class-A weapon · **right mouse** = Class-A ability
+- **F** = Class-B ability · **Esc** release/recapture the mouse
 
-Your abilities depend on your class. Painter's signature is Paint;
-Assault/Explosive/Wizard lob an area blast; Utility's deployable is a no-op stub
-until the entity system lands. Slot-2 (**F**) lays a special tile on ground you
-own — Painter mines, Utility heal, Explosive shock, Wizard slow — which then
-affect players who stand on them.
+Seven classes (data in `content/loadouts/`): Assault, Painter, Utility,
+Explosive, Wizard, **Healer** (heal / shield / speed), **Saboteur**
+(seize / disable). Tile powers place special tiles on ground you own — Shield is
+a one-way (by team) barrier that blocks enemy fire; Saboteur locks enemy/neutral
+tiles (no effect, no territory) until an enemy Saboteur reverses it.
+
+> **New here?** Read `HANDOFF.md` first, then `docs/GAME_DESIGN_DOCUMENT.md` and
+> `docs/TECHNICAL_ARCHITECTURE.md`. Nothing has been run in an editor yet — see
+> the first-run checklist below.
 
 Painting spends your team's shared token pool (neutral tile = 1, enemy tile = 2).
 Shooting deals damage; at 0 HP you die, a killfeed line appears, and you respawn

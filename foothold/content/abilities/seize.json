@@ -1,0 +1,9 @@
+{
+  "id": "seize",
+  "name": "Seize Tile",
+  "targeting": "tile",
+  "range": 12,
+  "cooldown": 1.0,
+  "_note": "Uses SetTileOwner: flips neutral/enemy ground to friendly at the usual paint cost (enemy = premium). The Saboteur's aggressive claim.",
+  "effects": [{ "op": "SetTileOwner", "target": "tile", "team": "caster" }]
+}

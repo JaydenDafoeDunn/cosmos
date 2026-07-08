@@ -1,0 +1,9 @@
+{
+  "id": "speed",
+  "code": 6,
+  "name": "Speed",
+  "effect": "speed",
+  "factor": 1.5,
+  "targets": "friendly",
+  "destructible": false
+}

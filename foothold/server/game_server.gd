@@ -21,7 +21,12 @@ const EYE := 1.6
 const NET_DT := 0.05         # 20 Hz state broadcast
 const TERR_DT := 1.0         # 1 Hz territory / score readout
 const TEAM_NAMES := ["A", "B", "C", "D"]
-const DEFAULT_LOADOUT := "painter"
+const DISABLED_WIRE_BIT := 0x40   # high bit on the replicated type byte = locked/sabotaged
+# Default dual-class combo until a player locks their own on the pre-match screen.
+const DEFAULT_CLASS_A := "painter"
+const DEFAULT_SPEC_A := "paint"
+const DEFAULT_CLASS_B := "assault"
+const DEFAULT_SPEC_B := "grenade"
 
 var grid: TileGrid
 var rules: Rules
@@ -34,6 +39,7 @@ var world_h := 0.0
 var match_time := 0.0
 var respawn_delay := 5.0
 
+var _shields: Dictionary = {}     # tile idx -> {center: Vector3, team: int}
 var _next_slot := 0
 var _net_acc := 0.0
 var _terr_acc := 0.0
@@ -82,32 +88,61 @@ func add_player(id: int) -> void:
 		"team": team, "slot": slot,
 		"hp": MAX_HP, "alive": true, "respawn_at": 0.0,
 		"cooldowns": {}, "damage_log": [],
-		"loadout": DEFAULT_LOADOUT,
+		"classA": DEFAULT_CLASS_A, "specA": DEFAULT_SPEC_A,
+		"classB": DEFAULT_CLASS_B, "specB": DEFAULT_SPEC_B, "locked": false,
+		"primary": "sidearm", "rmb": "", "f2": "",
 		"move_speed": MOVE_SPEED, "paint_cd_mult": 1.0, "paint_cost_delta": 0,
-		"last_tile": Vector2i(-999, -999),
+		"last_tile": Vector2i(-999, -999), "stunned_until": 0.0,
 	}
-	_apply_loadout(players[id])
+	_derive_loadout(players[id])
 	EventBus.publish(Events.PLAYER_SPAWNED, {"id": id, "team": team, "slot": slot})
 	Net.push_event.rpc("PlayerSpawned", "peer %d joined — Team %s" % [id, _team_name(team)])
 
-# Classes are DATA (design doc §8): a loadout is slot assignments + a passive.
-# Applying one derives stat modifiers; the engine has no notion of "Assault".
-func set_loadout(id: int, loadout_id: String) -> void:
-	if not players.has(id) or not Defs.loadouts.has(loadout_id):
+# Match-locked dual class (design doc §8: combine two presets). A player picks
+# two classes + one specialization each, once, then it's frozen for the match.
+func select_classes(id: int, class_a: String, spec_a: String, class_b: String, spec_b: String) -> void:
+	if not players.has(id):
 		return
-	players[id]["loadout"] = loadout_id
-	_apply_loadout(players[id])
+	var p: Dictionary = players[id]
+	if p["locked"]:
+		_deny(id, "classes are locked for this match")
+		return
+	if not Defs.loadouts.has(class_a) or not Defs.loadouts.has(class_b):
+		return
+	p["classA"] = class_a
+	p["specA"] = spec_a if spec_a in Defs.loadouts[class_a].get("specializations", []) else _first_spec(class_a)
+	p["classB"] = class_b
+	p["specB"] = spec_b if spec_b in Defs.loadouts[class_b].get("specializations", []) else _first_spec(class_b)
+	p["locked"] = true
+	_derive_loadout(p)
 	_respawn(id)
-	Net.push_event.rpc("Loadout", "peer %d → %s" % [id, Defs.loadouts[loadout_id].get("name", loadout_id)])
+	Net.push_event.rpc("Loadout", "peer %d locked %s(%s) + %s(%s)" % [id,
+		Defs.loadouts[class_a].get("name", class_a), _ability_name(p["specA"]),
+		Defs.loadouts[class_b].get("name", class_b), _ability_name(p["specB"])])
 
-func _apply_loadout(p: Dictionary) -> void:
+func _first_spec(cls: String) -> String:
+	var specs: Array = Defs.loadouts.get(cls, {}).get("specializations", [])
+	return specs[0] if specs.size() > 0 else ""
+
+# Derive the runtime kit from the two chosen classes: Class A's weapon + Class A's
+# spec (RMB) + Class B's spec (F); both passives apply.
+func _derive_loadout(p: Dictionary) -> void:
+	var ca: Dictionary = Defs.loadouts.get(p["classA"], {})
+	var cb: Dictionary = Defs.loadouts.get(p["classB"], {})
+	p["primary"] = ca.get("primary", "sidearm")
+	p["rmb"] = p["specA"]
+	p["f2"] = p["specB"]
 	p["move_speed"] = MOVE_SPEED
 	p["paint_cd_mult"] = 1.0
 	p["paint_cost_delta"] = 0
-	match Defs.loadouts.get(p["loadout"], {}).get("passive", ""):
+	_apply_passive(p, ca.get("passive", ""))
+	_apply_passive(p, cb.get("passive", ""))
+
+func _apply_passive(p: Dictionary, passive: String) -> void:
+	match passive:
 		"sprint": p["move_speed"] = MOVE_SPEED * 1.4
 		"faster_painting": p["paint_cd_mult"] = 0.5
-		"improved_token_efficiency": p["paint_cost_delta"] = -1
+		"improved_token_efficiency": p["paint_cost_delta"] = int(p["paint_cost_delta"]) - 1
 		# "reduced_utility_cost" / "demolition": no effect until utilities / tile HP exist
 
 func _spawn_pos(team: int, slot: int) -> Vector3:
@@ -125,24 +160,16 @@ func handle_paint_intent(id: int, x: int, y: int) -> void:
 	use_ability(id, "paint", {"tile": Vector2i(x, y)})
 
 func handle_fire_intent(id: int, origin: Vector3, dir: Vector3) -> void:
-	if not players.has(id):
-		return
-	var prim: String = Defs.loadouts.get(players[id]["loadout"], {}).get("primary", "assault_rifle")
-	use_ability(id, prim, {"origin": origin, "dir": dir})
+	if players.has(id):
+		use_ability(id, players[id]["primary"], {"origin": origin, "dir": dir})
 
 func handle_signature_intent(id: int, origin: Vector3, dir: Vector3, tx: int, ty: int) -> void:
-	if not players.has(id):
-		return
-	var sig: String = Defs.loadouts.get(players[id]["loadout"], {}).get("signature", "")
-	if sig != "":
-		use_ability(id, sig, {"origin": origin, "dir": dir, "tile": Vector2i(tx, ty)})
+	if players.has(id) and players[id]["rmb"] != "":
+		use_ability(id, players[id]["rmb"], {"origin": origin, "dir": dir, "tile": Vector2i(tx, ty)})
 
 func handle_slot2_intent(id: int, origin: Vector3, dir: Vector3, tx: int, ty: int) -> void:
-	if not players.has(id):
-		return
-	var a2: String = Defs.loadouts.get(players[id]["loadout"], {}).get("slot2", "")
-	if a2 != "":
-		use_ability(id, a2, {"origin": origin, "dir": dir, "tile": Vector2i(tx, ty)})
+	if players.has(id) and players[id]["f2"] != "":
+		use_ability(id, players[id]["f2"], {"origin": origin, "dir": dir, "tile": Vector2i(tx, ty)})
 
 # ---- the one ability pipeline (TA §7) --------------------------------------
 func use_ability(caster_id: int, ability_id: String, target: Dictionary) -> void:
@@ -181,6 +208,8 @@ func _run_effect(eff: Dictionary, caster_id: int, p: Dictionary, target: Diction
 			return _eff_damage(caster_id, p, target, eff, ab)
 		"AreaDamage":
 			return _eff_area_damage(caster_id, p, target, eff, ab)
+		"SetTileDisabled":
+			return _eff_set_tile_disabled(caster_id, p, target, ab)
 		_:
 			return true  # unknown op: no-op success (forward-compatible; e.g. SpawnEntity)
 
@@ -190,6 +219,9 @@ func _eff_set_tile_owner(caster_id: int, p: Dictionary, target: Dictionary) -> b
 		return false
 	var tile: Vector2i = target.get("tile", Vector2i(-1, -1))
 	if not grid.in_bounds(tile.x, tile.y):
+		return false
+	if grid.is_disabled(tile.x, tile.y):
+		_deny(caster_id, "tile is sabotaged (locked)")
 		return false
 	var team: int = p["team"]
 	var mine := team + 1
@@ -215,6 +247,9 @@ func _eff_set_tile_type(caster_id: int, p: Dictionary, target: Dictionary, eff: 
 	var tile: Vector2i = target.get("tile", Vector2i(-1, -1))
 	if not grid.in_bounds(tile.x, tile.y):
 		return false
+	if grid.is_disabled(tile.x, tile.y):
+		_deny(caster_id, "tile is sabotaged (locked)")
+		return false
 	var team: int = p["team"]
 	if grid.owner_at(tile.x, tile.y) != team + 1:   # requirement: target_friendly_tile
 		_deny(caster_id, "must target your own tile")
@@ -228,6 +263,27 @@ func _eff_set_tile_type(caster_id: int, p: Dictionary, target: Dictionary, eff: 
 		team_pool[team] = int(team_pool[team]) - cost
 		EventBus.publish(Events.RESOURCE_SPENT, {"team": team, "amount": cost, "sink": ab.get("id", "place")})
 	grid.apply(tile.x, tile.y, -1, code, 0, {"kind": "ability", "actor": p["slot"], "ref": ab.get("id", "place")})
+	return true
+
+# Saboteur: toggle the lock on an enemy/neutral tile. Locking removes its effect
+# and territory credit; an enemy Saboteur toggles it back (reverses). Costs the
+# enemy-tile premium either way.
+func _eff_set_tile_disabled(caster_id: int, p: Dictionary, target: Dictionary, ab: Dictionary) -> bool:
+	var tile: Vector2i = target.get("tile", Vector2i(-1, -1))
+	if not grid.in_bounds(tile.x, tile.y):
+		return false
+	var team: int = p["team"]
+	if grid.owner_at(tile.x, tile.y) == team + 1:
+		_deny(caster_id, "can't sabotage your own tile")
+		return false
+	var cost := int(ab.get("cost", {}).get("tokens", 2))
+	if int(team_pool.get(team, 0)) < cost:
+		_deny(caster_id, "not enough tokens (%d/%d)" % [team_pool.get(team, 0), cost])
+		return false
+	team_pool[team] = int(team_pool[team]) - cost
+	EventBus.publish(Events.RESOURCE_SPENT, {"team": team, "amount": cost, "sink": "sabotage"})
+	var new_state := 0 if grid.is_disabled(tile.x, tile.y) else 1
+	grid.apply(tile.x, tile.y, -1, -1, 0, {"kind": "ability", "actor": p["slot"], "ref": "sabotage"}, new_state)
 	return true
 
 func _eff_damage(caster_id: int, p: Dictionary, target: Dictionary, eff: Dictionary, ab: Dictionary) -> bool:
@@ -273,7 +329,43 @@ func _hitscan(shooter_id: int, shooter_team: int, origin: Vector3, dir: Vector3,
 			continue
 		best_t = tt
 		best_id = id
+	# One-way team shield: an ENEMY shield tile absorbs the shot before it lands.
+	var limit := best_t if best_id >= 0 else max_dist
+	var block_t := _shield_block_dist(shooter_team, origin, dir, limit)
+	if block_t >= 0.0:
+		return {"id": -1, "point": origin + dir * block_t, "dist": block_t}
 	return {"id": best_id, "point": origin + dir * best_t, "dist": best_t}
+
+# Nearest enemy shield tile the ray crosses within max_check, or -1.
+func _shield_block_dist(shooter_team: int, origin: Vector3, dir: Vector3, max_check: float) -> float:
+	var best := -1.0
+	for idx in _shields:
+		var sh: Dictionary = _shields[idx]
+		if int(sh["team"]) == shooter_team:
+			continue  # your own shields never block you (one-way by team)
+		var c: Vector3 = sh["center"]
+		var t := _ray_box(origin, dir, Vector3(c.x - 1.0, 0.0, c.z - 1.0), Vector3(c.x + 1.0, 3.0, c.z + 1.0))
+		if t > 0.05 and t <= max_check and (best < 0.0 or t < best):
+			best = t
+	return best
+
+func _ray_box(origin: Vector3, dir: Vector3, bmin: Vector3, bmax: Vector3) -> float:
+	var tmin := 0.0
+	var tmax := 1.0e9
+	for a in 3:
+		if absf(dir[a]) < 1.0e-8:
+			if origin[a] < bmin[a] or origin[a] > bmax[a]:
+				return -1.0
+		else:
+			var t1 := (bmin[a] - origin[a]) / dir[a]
+			var t2 := (bmax[a] - origin[a]) / dir[a]
+			if t1 > t2:
+				var tmp := t1; t1 = t2; t2 = tmp
+			tmin = maxf(tmin, t1)
+			tmax = minf(tmax, t2)
+			if tmin > tmax:
+				return -1.0
+	return tmin
 
 # Where an aimed "point" ability lands: the ground under the crosshair, else
 # capped at range along the aim ray.
@@ -385,28 +477,42 @@ func _physics_process(delta: float) -> void:
 				_respawn(id)
 			continue
 
-		# --- movement, with Slow fields applied ---
+		# --- movement, with Slow / Speed fields (disabled tiles are inert) ---
 		var cur := _tile_of(p["pos"])
-		var speed := float(p.get("move_speed", MOVE_SPEED))
 		var here := _tile_def_at(cur)
-		if here.get("effect", "") == "slow" and p["team"] != _tile_owner_team(cur):
-			speed *= float(here.get("factor", 0.5))
+		var owner_here := _tile_owner_team(cur)
+		var speed := float(p.get("move_speed", MOVE_SPEED))
+		match here.get("effect", ""):
+			"slow":
+				if owner_here >= 0 and p["team"] != owner_here:
+					speed *= float(here.get("factor", 0.5))
+			"speed":
+				if owner_here >= 0 and p["team"] == owner_here:
+					speed *= float(here.get("factor", 1.5))
+		if match_time < float(p["stunned_until"]):
+			speed = 0.0   # stunned: frozen in place
 		var wish: Vector2 = p["input"]
-		if wish != Vector2.ZERO:
+		if wish != Vector2.ZERO and speed > 0.0:
 			p["pos"] += Vector3(wish.x, 0.0, wish.y) * speed * delta
 			p["pos"].x = clampf(p["pos"].x, 0.5, world_w - 0.5)
 			p["pos"].z = clampf(p["pos"].z, 0.5, world_h - 0.5)
 			cur = _tile_of(p["pos"])
 
-		# --- Mine: detonate on first entry onto an enemy-owned mine tile ---
+		# --- on-enter effects: Mine detonation, Stun trap ---
 		if cur != p["last_tile"]:
 			p["last_tile"] = cur
 			var d := _tile_def_at(cur)
-			if d.get("effect", "") == "detonate_on_enter" and p["team"] != _tile_owner_team(cur) and _tile_owner_team(cur) >= 0:
-				_detonate_mine(cur.x, cur.y)
+			var ot := _tile_owner_team(cur)
+			if ot >= 0 and p["team"] != ot:
+				match d.get("effect", ""):
+					"detonate_on_enter":
+						_detonate_mine(cur.x, cur.y)
+					"stun":
+						p["stunned_until"] = match_time + float(d.get("duration", 1.0))
+						grid.apply(cur.x, cur.y, -1, 0, 0, {"kind": "environment", "actor": -1, "ref": "stun_spent"})
 
 		# --- Shock (DoT) / Heal (regen), every 0.5s ---
-		if do_tile_tick and players.has(id) and p["alive"]:
+		if do_tile_tick and p["alive"]:
 			var t := _tile_of(p["pos"])
 			var def := _tile_def_at(t)
 			var owner_team := _tile_owner_team(t)
@@ -440,8 +546,15 @@ func _broadcast_snapshot() -> void:
 
 func _broadcast_territory() -> void:
 	var total := grid.total_tiles()
-	var a := grid.count_by_owner(1)
-	var b := grid.count_by_owner(2)
+	# O(n) scan at 1 Hz so sabotaged (locked) tiles don't count toward territory.
+	var a := 0
+	var b := 0
+	for i in total:
+		if grid.disabled[i] == 1:
+			continue
+		match grid.owner[i]:
+			1: a += 1
+			2: b += 1
 	EventBus.publish(Events.TERRITORY_COUNT, {"a": a, "b": b, "total": total})
 	Net.push_event.rpc("TerritoryCount", "A %d%% (kills %d)  ·  B %d%% (kills %d)  ·  tokens A:%d B:%d" % [
 		roundi(100.0 * a / total), team_score.get(0, 0),
@@ -468,10 +581,24 @@ func _end(text: String) -> void:
 
 # ---- replication plumbing --------------------------------------------------
 func _on_tile_changed(p: Dictionary) -> void:
-	_pending.append(p["x"])
-	_pending.append(p["y"])
+	var x: int = p["x"]
+	var y: int = p["y"]
+	var code: int = p["type"]
+	var is_off: bool = int(p.get("disabled", 0)) == 1
+	# Maintain the shield set used by hitscan (a disabled shield doesn't block).
+	var i := grid.idx(x, y)
+	if code == Defs.code_of("shield") and not is_off:
+		_shields[i] = {"center": Vector3((x + 0.5) * TILE, 0.0, (y + 0.5) * TILE), "team": int(p["owner"]) - 1}
+	else:
+		_shields.erase(i)
+	# Replicate: fold the disabled flag into the high bit of the type byte.
+	_pending.append(x)
+	_pending.append(y)
 	_pending.append(p["owner"])
-	_pending.append(p["type"])
+	_pending.append(code | (DISABLED_WIRE_BIT if is_off else 0))
+
+func _ability_name(id: String) -> String:
+	return Defs.abilities.get(id, {}).get("name", id)
 
 func _deny(id: int, reason: String) -> void:
 	EventBus.publish(Events.ABILITY_DENIED, {"player": id, "reason": reason})
@@ -484,6 +611,8 @@ func _tile_of(pos: Vector3) -> Vector2i:
 func _tile_def_at(t: Vector2i) -> Dictionary:
 	if not grid.in_bounds(t.x, t.y):
 		return {}
+	if grid.disabled[grid.idx(t.x, t.y)] == 1:
+		return {}   # sabotaged/locked tiles produce no effect
 	var code: int = grid.type[grid.idx(t.x, t.y)]
 	return Defs.tile_types.get(Defs.tile_type_by_code.get(code, "normal"), {})
 

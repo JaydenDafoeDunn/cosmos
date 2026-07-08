@@ -2,8 +2,6 @@
   "id": "explosive",
   "name": "Explosive",
   "primary": "rocket_launcher",
-  "secondary": "smg",
-  "signature": "breaching",
-  "slot2": "place_shock",
-  "passive": "demolition"
+  "passive": "demolition",
+  "specializations": ["breaching"]
 }

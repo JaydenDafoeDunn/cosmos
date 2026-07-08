@@ -2,8 +2,6 @@
   "id": "utility",
   "name": "Utility",
   "primary": "utility_tool",
-  "secondary": "smg",
-  "signature": "deploy",
-  "slot2": "place_heal",
-  "passive": "reduced_utility_cost"
+  "passive": "reduced_utility_cost",
+  "specializations": ["place_stun", "place_shock", "place_slow"]
 }
