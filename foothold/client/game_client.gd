@@ -1,21 +1,21 @@
 # ============================================================================
 # GameClient — presentation only (design doc §13). Renders authoritative state
-# in 3D greybox, sends INTENTS, predicts nothing but the local player's own
-# movement (naive; proper reconciliation is Milestone 6).
+# in 3D greybox, sends INTENTS, predicts only the local player's movement and
+# its own weapon VFX (proper reconciliation is Milestone 6).
 #
-# Rendering choices that keep a low-end laptop happy:
-#   * The whole tile floor is ONE MultiMeshInstance3D (one draw call, per-tile
-#     instance color) — never one node per tile (TA §5).
-#   * No textures, no shadows, no post — greybox primitives only.
+# Controls: WASD move · mouse look · HOLD LEFT = fire · RIGHT = paint · Esc mouse
 # ============================================================================
 class_name GameClient
 extends Node3D
 
 const TILE := 2.0
 const EYE := 1.6
-const MOVE_SPEED := 7.0     # must match GameServer for clean prediction
+const MOVE_SPEED := 7.0      # must match GameServer for clean prediction
 const MOUSE_SENS := 0.0025
-const SEND_DT := 0.05       # 20 Hz input upstream
+const SEND_DT := 0.05
+const FIRE_CD := 0.12        # must match the shoot ability cooldown
+const SHOOT_RANGE := 60.0
+const MAX_HP := 100.0
 const TEAM_NAMES := ["A", "B", "C", "D"]
 
 var my_id := 0
@@ -24,26 +24,36 @@ var grid: TileGrid
 
 var my_pos := Vector3.ZERO
 var my_team := 0
+var my_hp := 100
+var my_alive := true
 var yaw := 0.0
 var pitch := 0.0
-var _seeded := false        # adopt server spawn on first snapshot, then predict
+var _seeded := false
 
-var players: Dictionary = {}   # id -> {team, mesh:MeshInstance3D}
+var players: Dictionary = {}     # id -> {team, mesh}
 var floor_mm: MultiMeshInstance3D
 var camera: Camera3D
 var world_w := 0.0
 var world_h := 0.0
 
 var _send_acc := 0.0
+var _fire_cd := 0.0
+var _hit_flash := 0.0
 var _log: Array[String] = []
+var _killfeed: Array[String] = []
+
 var _status_label: Label
 var _log_label: Label
+var _killfeed_label: Label
+var _crosshair: Label
+var _respawn_label: Label
+var _hp_fill: ColorRect
 var _peer_count := 0
 
 func start(id: int, host: bool) -> void:
 	my_id = id
 	is_host = host
-	if grid == null:                       # host, or full grid not yet arrived
+	if grid == null:
 		grid = TileGrid.new()
 		grid.setup(64, 64, false)
 	world_w = grid.w * TILE
@@ -66,7 +76,6 @@ func _build_world() -> void:
 
 	var sun := DirectionalLight3D.new()
 	sun.rotation_degrees = Vector3(-55, -40, 0)
-	sun.light_energy = 1.0
 	add_child(sun)
 
 	camera = Camera3D.new()
@@ -90,8 +99,7 @@ func _build_floor() -> void:
 	for ty in grid.h:
 		for tx in grid.w:
 			var i := ty * grid.w + tx
-			var xf := Transform3D(Basis(), Vector3((tx + 0.5) * TILE, -0.1, (ty + 0.5) * TILE))
-			mm.set_instance_transform(i, xf)
+			mm.set_instance_transform(i, Transform3D(Basis(), Vector3((tx + 0.5) * TILE, -0.1, (ty + 0.5) * TILE)))
 			mm.set_instance_color(i, _owner_color(grid.owner[i]))
 	floor_mm = MultiMeshInstance3D.new()
 	floor_mm.multimesh = mm
@@ -102,7 +110,6 @@ func _build_floor() -> void:
 	add_child(floor_mm)
 
 func _build_walls() -> void:
-	# Thin greybox boundary so the arena reads as a space.
 	var h := 2.0
 	var specs := [
 		[Vector3(world_w * 0.5, h * 0.5, 0.0), Vector3(world_w, h, 0.4)],
@@ -125,17 +132,25 @@ func _build_hud() -> void:
 	var layer := CanvasLayer.new()
 	add_child(layer)
 
-	var cross := Label.new()
-	cross.text = "+"
-	cross.add_theme_font_size_override("font_size", 22)
-	cross.set_anchors_preset(Control.PRESET_CENTER)
-	cross.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	cross.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	layer.add_child(cross)
+	_crosshair = Label.new()
+	_crosshair.text = "+"
+	_crosshair.add_theme_font_size_override("font_size", 22)
+	_crosshair.set_anchors_preset(Control.PRESET_CENTER)
+	_crosshair.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_crosshair.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	layer.add_child(_crosshair)
 
 	_status_label = Label.new()
 	_status_label.position = Vector2(12, 10)
 	layer.add_child(_status_label)
+
+	_killfeed_label = Label.new()
+	_killfeed_label.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	_killfeed_label.position = Vector2(-340, 10)
+	_killfeed_label.custom_minimum_size = Vector2(330, 0)
+	_killfeed_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	_killfeed_label.add_theme_font_size_override("font_size", 13)
+	layer.add_child(_killfeed_label)
 
 	_log_label = Label.new()
 	_log_label.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
@@ -143,73 +158,120 @@ func _build_hud() -> void:
 	_log_label.add_theme_font_size_override("font_size", 12)
 	layer.add_child(_log_label)
 
-# ---- per-frame: local input + prediction + camera --------------------------
+	# Health bar, bottom-center.
+	var hp_bg := ColorRect.new()
+	hp_bg.color = Color(0, 0, 0, 0.5)
+	hp_bg.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
+	hp_bg.position = Vector2(-102, -40)
+	hp_bg.size = Vector2(204, 18)
+	layer.add_child(hp_bg)
+	_hp_fill = ColorRect.new()
+	_hp_fill.color = Color(0.3, 0.85, 0.4)
+	_hp_fill.position = Vector2(2, 2)
+	_hp_fill.size = Vector2(200, 14)
+	hp_bg.add_child(_hp_fill)
+
+	_respawn_label = Label.new()
+	_respawn_label.text = "RESPAWNING…"
+	_respawn_label.set_anchors_preset(Control.PRESET_CENTER)
+	_respawn_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_respawn_label.add_theme_font_size_override("font_size", 28)
+	_respawn_label.position = Vector2(0, 40)
+	_respawn_label.visible = false
+	layer.add_child(_respawn_label)
+
+# ---- per-frame -------------------------------------------------------------
 func _process(delta: float) -> void:
 	if camera == null:
 		return
-	var fa := (1.0 if Input.is_physical_key_pressed(KEY_W) else 0.0) - (1.0 if Input.is_physical_key_pressed(KEY_S) else 0.0)
-	var ra := (1.0 if Input.is_physical_key_pressed(KEY_D) else 0.0) - (1.0 if Input.is_physical_key_pressed(KEY_A) else 0.0)
-	var fwd := Vector3(-sin(yaw), 0.0, -cos(yaw))
-	var right := Vector3(cos(yaw), 0.0, -sin(yaw))
-	var wish3 := fwd * fa + right * ra
+	_fire_cd = maxf(0.0, _fire_cd - delta)
+	if _hit_flash > 0.0:
+		_hit_flash = maxf(0.0, _hit_flash - delta)
+		if _hit_flash == 0.0 and _crosshair:
+			_crosshair.modulate = Color.WHITE
+
 	var wish := Vector2.ZERO
-	if wish3.length() > 0.001:
-		wish3 = wish3.normalized()
-		wish = Vector2(wish3.x, wish3.z)
-		my_pos += Vector3(wish.x, 0.0, wish.y) * MOVE_SPEED * delta   # local prediction
-		my_pos.x = clampf(my_pos.x, 0.5, world_w - 0.5)
-		my_pos.z = clampf(my_pos.z, 0.5, world_h - 0.5)
+	if my_alive:
+		var fa := (1.0 if Input.is_physical_key_pressed(KEY_W) else 0.0) - (1.0 if Input.is_physical_key_pressed(KEY_S) else 0.0)
+		var ra := (1.0 if Input.is_physical_key_pressed(KEY_D) else 0.0) - (1.0 if Input.is_physical_key_pressed(KEY_A) else 0.0)
+		var fwd := Vector3(-sin(yaw), 0.0, -cos(yaw))
+		var right := Vector3(cos(yaw), 0.0, -sin(yaw))
+		var wish3 := fwd * fa + right * ra
+		if wish3.length() > 0.001:
+			wish3 = wish3.normalized()
+			wish = Vector2(wish3.x, wish3.z)
+			my_pos += Vector3(wish.x, 0.0, wish.y) * MOVE_SPEED * delta
+			my_pos.x = clampf(my_pos.x, 0.5, world_w - 0.5)
+			my_pos.z = clampf(my_pos.z, 0.5, world_h - 0.5)
+		# hold-to-fire
+		if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) and _fire_cd <= 0.0:
+			_fire()
 
 	_send_acc += delta
 	if _send_acc >= SEND_DT:
 		_send_acc = 0.0
 		_send_input(wish)
 
-	# camera: yaw about Y, pitch about local X, at eye height
 	var b := Basis(Vector3.UP, yaw) * Basis(Vector3.RIGHT, pitch)
 	camera.transform = Transform3D(b, my_pos + Vector3(0.0, EYE, 0.0))
 
+	_update_hud()
+
+func _update_hud() -> void:
 	if _status_label:
-		_status_label.text = "%s  peer %d  Team %s  players:%d\nWASD move · mouse look · click paint · Esc release" % [
-			"HOST" if is_host else "CLIENT", my_id, TEAM_NAMES[my_team] if my_team < TEAM_NAMES.size() else str(my_team), _peer_count]
+		_status_label.text = "%s  peer %d  Team %s  players:%d\nWASD move · look · HOLD LMB fire · RMB paint · Esc" % [
+			"HOST" if is_host else "CLIENT", my_id,
+			TEAM_NAMES[my_team] if my_team < TEAM_NAMES.size() else str(my_team), _peer_count]
+	if _hp_fill:
+		var frac := clampf(float(my_hp) / MAX_HP, 0.0, 1.0)
+		_hp_fill.size = Vector2(200.0 * frac, 14.0)
+		_hp_fill.color = Color(0.3, 0.85, 0.4).lerp(Color(0.9, 0.25, 0.25), 1.0 - frac)
+	if _respawn_label:
+		_respawn_label.visible = not my_alive
 
 func _input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
 		yaw -= event.relative.x * MOUSE_SENS
 		pitch = clampf(pitch - event.relative.y * MOUSE_SENS, -1.4, 1.4)
-	elif event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
-		if Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
+	elif event is InputEventMouseButton and event.pressed:
+		if event.button_index == MOUSE_BUTTON_LEFT and Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
 			Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
-		else:
+		elif event.button_index == MOUSE_BUTTON_RIGHT and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED and my_alive:
 			_paint_at_aim()
 	elif event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
 		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED else Input.MOUSE_MODE_CAPTURED
 
+# ---- actions ---------------------------------------------------------------
+func _fire() -> void:
+	_fire_cd = FIRE_CD
+	var origin := camera.global_position
+	var dir := -camera.global_transform.basis.z
+	show_tracer(my_id, origin, origin + dir * SHOOT_RANGE)  # predicted VFX
+	if is_host and Net.server:
+		Net.server.handle_fire_intent(1, origin, dir)
+	else:
+		Net.submit_fire.rpc_id(1, origin, dir)
+
 func _paint_at_aim() -> void:
-	# Ray from the camera to the ground plane (y = 0); paint that tile.
 	var from := camera.global_position
 	var dir := -camera.global_transform.basis.z
 	if dir.y >= -0.001:
-		return  # aiming at/above the horizon — no ground hit
+		return
 	var t := -from.y / dir.y
 	var hit := from + dir * t
 	var tx := int(hit.x / TILE)
 	var ty := int(hit.z / TILE)
 	if grid.in_bounds(tx, ty):
-		_send_paint(tx, ty)
+		if is_host and Net.server:
+			Net.server.handle_paint_intent(1, tx, ty)
+		else:
+			Net.submit_paint.rpc_id(1, tx, ty)
 
-# ---- intent send (host talks to its server directly; clients RPC peer 1) ----
 func _send_input(wish: Vector2) -> void:
 	if is_host and Net.server:
 		Net.server.set_player_input(1, wish)
 	else:
 		Net.submit_input.rpc_id(1, wish.x, wish.y)
-
-func _send_paint(x: int, y: int) -> void:
-	if is_host and Net.server:
-		Net.server.handle_paint_intent(1, x, y)
-	else:
-		Net.submit_paint.rpc_id(1, x, y)
 
 # ---- authoritative state in (called by Net) --------------------------------
 func apply_snapshot(snap: Array) -> void:
@@ -219,17 +281,24 @@ func apply_snapshot(snap: Array) -> void:
 		var id: int = entry[0]
 		var pos := Vector3(entry[1], 0.0, entry[2])
 		var team: int = entry[3]
+		var hp: int = entry[4]
+		var alive: bool = entry[5] != 0
 		present[id] = true
 		if id == my_id:
-			if not _seeded:                 # adopt server spawn once, then trust local
+			my_hp = hp
+			if alive and not my_alive:
+				_seeded = false       # just respawned — re-adopt server spawn
+			my_alive = alive
+			if not _seeded:
 				my_pos = pos
 				my_team = team
 				_seeded = true
 			continue
 		if not players.has(id):
 			players[id] = {"team": team, "mesh": _make_avatar(team)}
-		players[id]["mesh"].position = pos + Vector3(0.0, 0.8, 0.0)
-	# drop avatars for players who left
+		var mesh: MeshInstance3D = players[id]["mesh"]
+		mesh.position = pos + Vector3(0.0, 0.8, 0.0)
+		mesh.visible = alive
 	for id in players.keys():
 		if not present.has(id):
 			players[id]["mesh"].queue_free()
@@ -250,9 +319,42 @@ func load_full_grid(owner_bytes: PackedByteArray, type_bytes: PackedByteArray, w
 	if grid == null:
 		grid = TileGrid.new()
 	grid.load_snapshot(owner_bytes, type_bytes, w, h)
-	if floor_mm != null:                    # recolor existing instances
+	if floor_mm != null:
 		for idx in grid.w * grid.h:
 			floor_mm.multimesh.set_instance_color(idx, _owner_color(grid.owner[idx]))
+
+# ---- combat feedback (called by Net) ---------------------------------------
+func show_tracer(shooter_id: int, a: Vector3, b: Vector3) -> void:
+	if shooter_id == my_id:
+		return  # we already drew our own predicted tracer in _fire()
+	if a.distance_to(b) < 0.05:
+		return
+	var m := MeshInstance3D.new()
+	var box := BoxMesh.new()
+	box.size = Vector3(0.04, 0.04, a.distance_to(b))
+	m.mesh = box
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.albedo_color = Color(1.0, 0.9, 0.5)
+	m.material_override = mat
+	add_child(m)
+	var up := Vector3.UP
+	if absf((b - a).normalized().dot(up)) > 0.99:
+		up = Vector3.FORWARD   # avoid parallel up when firing near-vertical
+	m.look_at_from_position((a + b) * 0.5, b, up)
+	get_tree().create_timer(0.06).timeout.connect(m.queue_free)
+
+func show_hitmarker() -> void:
+	_hit_flash = 0.12
+	if _crosshair:
+		_crosshair.modulate = Color(1.0, 0.4, 0.4)
+
+func add_killfeed(text: String) -> void:
+	_killfeed.append(text)
+	if _killfeed.size() > 5:
+		_killfeed = _killfeed.slice(_killfeed.size() - 5)
+	if _killfeed_label:
+		_killfeed_label.text = "\n".join(_killfeed)
 
 func log_event(_name: String, text: String) -> void:
 	_log.append("• " + text)
@@ -276,10 +378,9 @@ func _make_avatar(team: int) -> MeshInstance3D:
 
 func _owner_color(o: int) -> Color:
 	match o:
-		1: return Color(0.16, 0.38, 0.85)   # Team A
-		2: return Color(0.85, 0.22, 0.22)   # Team B
-		_: return Color(0.13, 0.14, 0.17)   # neutral
-	# TODO (Milestone 2 / accessibility §16): add per-team pattern, not color alone.
+		1: return Color(0.16, 0.38, 0.85)
+		2: return Color(0.85, 0.22, 0.22)
+		_: return Color(0.13, 0.14, 0.17)
 
 func _team_color(team: int) -> Color:
 	return Color(0.30, 0.55, 1.0) if team == 0 else Color(1.0, 0.4, 0.4)

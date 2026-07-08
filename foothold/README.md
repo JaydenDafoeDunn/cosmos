@@ -30,24 +30,36 @@ Low-end laptop: the project already forces the **GL Compatibility** renderer and
 uses no textures/shadows — it should run on integrated graphics.
 
 ## Controls
-- **WASD** move · **mouse** look · **left-click** paint the tile you're aiming at
+- **WASD** move · **mouse** look
+- **hold left mouse** = fire the rifle (hitscan) · **right mouse** = paint the aimed tile
 - **Esc** release/recapture the mouse
 
 Painting spends your team's shared token pool (neutral tile = 1, enemy tile = 2).
-Watch the bottom-left event log: `PlayerSpawned`, territory %, and `AbilityDenied`
-(when the pool is empty) all come over the wire from the server.
+Shooting deals damage; at 0 HP you die, a killfeed line appears, and you respawn
+after the mode's delay. The bottom-left event log and top-right killfeed both come
+over the wire from the server.
 
-## What this slice proves (Milestone 0 → 1)
+## What this slice proves (Milestone 0 → 3)
 - **Client/server split from line one.** The host runs a `GameServer` *and* a
   `GameClient` — two separate `TileGrid`s in one process, synced only by network
   deltas, exactly as a remote client would be. No gameplay state is client-owned.
+- **One ability pipeline.** Paint and shooting run through the *same*
+  `use_ability()` → effect-primitive path (`SetTileOwner`, `Damage`). The engine
+  never special-cases "painting" or "shooting" — they're data in
+  `content/abilities`. A new ability is a new combination of existing primitives.
 - **One mutation path.** Every tile change goes through `TileGrid.apply()`, which
   records attribution and emits `TileChanged`. Painting reuses it; so will
   objectives, mines, and air strikes.
-- **Rules as validation.** Painting is gated by the mode's rule set; the server
-  is the only authority. Switch `DEFAULT_MODE` in `main/main.gd` to
-  `"team_deathmatch"` and painting turns off — **config only, zero code**. That's
-  the architecture's acceptance test.
+- **Server-authoritative combat + attribution (TA §8.1).** Hitscan, damage,
+  death, and respawn are all server-side. On death the server resolves the
+  killer, damage-window assists, and the **painter assist** (die on painted
+  ground → that tile's `owner_setter` gets credit) straight from the grid's
+  attribution arrays — no history scan.
+- **Rules as validation.** Painting, friendly-fire, and win conditions are gated
+  by the mode's rule set; the server is the only authority. Switch `DEFAULT_MODE`
+  in `main/main.gd` to `"team_deathmatch"` and painting turns off while the win
+  condition becomes kills — **config only, zero code**. That's the architecture's
+  acceptance test.
 - **Data-driven content.** Tile types, abilities, loadouts, and modes are JSON in
   `content/`, loaded at startup by `Defs`.
 
@@ -60,18 +72,22 @@ shared/        the contract zone — used by both server and client
   tile_grid.gd   chunked SoA grid + the single mutation API (§5)
   defs.gd        definition-asset loader (JSON -> id-keyed dicts)
   net.gd         all RPCs (autoload so node paths match on every peer)
-server/game_server.gd   authoritative sim: intents, economy, replication
-client/game_client.gd   greybox 3D render, FP controller, aim-to-paint, HUD
+server/game_server.gd   authoritative sim: ability pipeline, combat, economy, replication
+client/game_client.gd   greybox 3D render, FP controller, fire/paint, HUD, killfeed
 main/main.gd            bootstrap + host/join/dedicated menu
 content/                tile_types / abilities / loadouts / modes  (data)
 ```
 
 ## Deliberately NOT here yet (next slices, per the milestone plan)
-- **Shooting / damage / death / kill attribution** — the `shoot` ability and the
-  `Damage`/`SpawnEntity` effect primitives (Milestone 3+). Movement has no
-  collision or gravity yet (flat plane).
+- **Movement physics** — no collision, gravity, or cover yet; players slide on a
+  flat plane and only the arena walls block the camera visually (not movement).
 - **Token pickups** — pools start pre-filled so painting is testable now; world
   token entities are Milestone 4.
+- **Ammo / reload, more effect primitives** — shooting is cooldown-gated with
+  infinite ammo; `SpawnEntity`, `ApplyStatus`, `Displace`, etc. come with mines,
+  grenades, and deployables.
+- **Loadouts wired to input** — the five presets exist as data (`content/loadouts`)
+  but everyone currently spawns with the same rifle+paint; slot binding is Milestone 5.
 - **Client-side prediction/reconciliation** — the local player predicts its own
   movement naively; remote players render straight from 20 Hz snapshots. Proper
   netcode hardening is Milestone 6.
@@ -84,12 +100,16 @@ content/                tile_types / abilities / loadouts / modes  (data)
 Please sanity-check these on your first F5 and tell me what breaks:
 1. Project imports with no script parse errors (check the Godot **Output**/**Debugger** panels).
 2. **Host**: you can look around, WASD moves you, arena walls are visible.
-3. Left-click paints the aimed floor tile blue; the pool decrements; painting past
-   ~60 tiles shows `AbilityDenied — not enough tokens` in the log.
+3. **Right-click** paints the aimed floor tile blue; the pool decrements; painting
+   past ~60 tiles shows `AbilityDenied — not enough tokens` in the log.
 4. Two instances: window 2's **Join** connects; each sees the other's capsule move;
    paints from either appear in both.
-5. `godot --headless -- --server` prints "headless server up" and a client can join it.
+5. **Combat** (needs two players): hold **left mouse** at the other capsule — you
+   see a tracer, the crosshair flashes on hit, their HP bar isn't shown but they
+   die after ~6 hits, a killfeed line appears, and they respawn.
+6. `godot --headless -- --server` prints "headless server up" and a client can join it.
 
 Likely first-run nits to watch for (untested code): MultiMesh per-instance color
-in the Compatibility renderer, and RPC arg types over the wire. If any of these
-misbehave, paste the Godot error text and I'll fix it fast.
+in the Compatibility renderer, `Vector3` RPC args over the wire, and
+`look_at_from_position` on tracers. If any misbehave, paste the Godot error text
+and I'll fix it fast.

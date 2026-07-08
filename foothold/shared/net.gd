@@ -48,3 +48,25 @@ func push_full_grid(owner_bytes: PackedByteArray, type_bytes: PackedByteArray, w
 func push_event(name: String, text: String) -> void:
 	if client:
 		client.log_event(name, text)
+
+# ---- combat ----
+@rpc("any_peer", "call_remote", "reliable")
+func submit_fire(origin: Vector3, dir: Vector3) -> void:
+	if server:
+		server.handle_fire_intent(multiplayer.get_remote_sender_id(), origin, dir)
+
+# Tracer VFX for everyone (the shooter already drew its own, predicted).
+@rpc("authority", "call_local", "unreliable")
+func push_tracer(shooter_id: int, a: Vector3, b: Vector3) -> void:
+	if client:
+		client.show_tracer(shooter_id, a, b)
+
+@rpc("authority", "call_local", "reliable")
+func push_hitmarker() -> void:
+	if client:
+		client.show_hitmarker()
+
+@rpc("authority", "call_local", "reliable")
+func push_killfeed(text: String) -> void:
+	if client:
+		client.add_killfeed(text)

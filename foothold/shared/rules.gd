@@ -19,6 +19,8 @@ const DEFAULTS := {
 	"respawn.enabled": true,
 	"tiles.destructible_walls": true,
 	"credit.painter_assist": true,
+	"credit.assist_window": 8.0,     # seconds a damager stays eligible for an assist
+	"combat.friendly_fire": false,
 }
 
 var _values: Dictionary = {}
