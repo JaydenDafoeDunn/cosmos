@@ -1,8 +1,0 @@
-{
-  "id": "sidearm",
-  "name": "Sidearm",
-  "targeting": "direction",
-  "range": 45,
-  "cooldown": 0.18,
-  "effects": [{ "op": "Damage", "target": "hitscan", "amount": 15, "falloff": true }]
-}

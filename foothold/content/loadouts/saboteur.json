@@ -1,7 +1,0 @@
-{
-  "id": "saboteur",
-  "name": "Saboteur",
-  "primary": "sidearm",
-  "passive": "improved_token_efficiency",
-  "specializations": ["disable", "seize"]
-}

@@ -1,7 +1,0 @@
-{
-  "id": "assault",
-  "name": "Assault",
-  "primary": "assault_rifle",
-  "passive": "sprint",
-  "specializations": ["grenade"]
-}

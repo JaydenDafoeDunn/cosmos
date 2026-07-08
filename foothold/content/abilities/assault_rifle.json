@@ -1,8 +1,0 @@
-{
-  "id": "assault_rifle",
-  "name": "Assault Rifle",
-  "targeting": "direction",
-  "range": 60,
-  "cooldown": 0.12,
-  "effects": [{ "op": "Damage", "target": "hitscan", "amount": 18, "falloff": true }]
-}

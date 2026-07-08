@@ -1,9 +1,0 @@
-{
-  "id": "slow",
-  "code": 4,
-  "name": "Slow",
-  "effect": "slow",
-  "factor": 0.5,
-  "targets": "enemy",
-  "destructible": false
-}

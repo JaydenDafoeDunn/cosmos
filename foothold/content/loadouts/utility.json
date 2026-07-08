@@ -1,7 +1,0 @@
-{
-  "id": "utility",
-  "name": "Utility",
-  "primary": "utility_tool",
-  "passive": "reduced_utility_cost",
-  "specializations": ["place_stun", "place_shock", "place_slow"]
-}
