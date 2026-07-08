@@ -1,0 +1,8 @@
+{
+  "id": "energy_beam",
+  "name": "Energy Beam",
+  "targeting": "direction",
+  "range": 100,
+  "cooldown": 0.25,
+  "effects": [{ "op": "Damage", "target": "hitscan", "amount": 26, "falloff": false }]
+}

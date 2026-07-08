@@ -1,0 +1,8 @@
+{
+  "id": "area_blast",
+  "name": "Arcane Blast",
+  "targeting": "point",
+  "range": 70,
+  "cooldown": 6.0,
+  "effects": [{ "op": "AreaDamage", "target": "point", "amount": 50, "radius": 5 }]
+}

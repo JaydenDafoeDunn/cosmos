@@ -1,0 +1,10 @@
+{
+  "id": "stun",
+  "code": 7,
+  "name": "Stun",
+  "effect": "stun",
+  "duration": 1.0,
+  "targets": "enemy",
+  "consumed": true,
+  "destructible": false
+}

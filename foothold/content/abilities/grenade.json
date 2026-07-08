@@ -1,0 +1,8 @@
+{
+  "id": "grenade",
+  "name": "Frag Grenade",
+  "targeting": "point",
+  "range": 32,
+  "cooldown": 4.0,
+  "effects": [{ "op": "AreaDamage", "target": "point", "amount": 60, "radius": 4 }]
+}

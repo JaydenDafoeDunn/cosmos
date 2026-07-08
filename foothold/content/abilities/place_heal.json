@@ -1,0 +1,10 @@
+{
+  "id": "place_heal",
+  "name": "Lay Heal Tile",
+  "targeting": "tile",
+  "range": 10,
+  "cooldown": 1.5,
+  "cost": { "tokens": 3 },
+  "requirements": [{ "type": "target_friendly_tile" }],
+  "effects": [{ "op": "SetTileType", "target": "tile", "type": "heal" }]
+}

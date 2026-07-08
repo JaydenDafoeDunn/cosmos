@@ -1,0 +1,7 @@
+{
+  "id": "healer",
+  "name": "Healer",
+  "primary": "sidearm",
+  "passive": "faster_painting",
+  "specializations": ["place_heal", "place_shield", "place_speed"]
+}

@@ -1,0 +1,8 @@
+{
+  "id": "rocket_launcher",
+  "name": "Rocket Launcher",
+  "targeting": "direction",
+  "range": 80,
+  "cooldown": 0.9,
+  "effects": [{ "op": "Damage", "target": "hitscan", "amount": 55, "falloff": false }]
+}

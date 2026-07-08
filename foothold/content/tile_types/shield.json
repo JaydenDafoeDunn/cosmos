@@ -1,0 +1,10 @@
+{
+  "id": "shield",
+  "code": 5,
+  "name": "Shield",
+  "effect": "shield",
+  "height": 3.0,
+  "note": "One-way by team: blocks enemy hitscan crossing this tile; friendly fire passes.",
+  "destructible": true,
+  "health": 60
+}

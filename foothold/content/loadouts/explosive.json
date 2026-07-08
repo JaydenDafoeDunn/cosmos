@@ -1,0 +1,7 @@
+{
+  "id": "explosive",
+  "name": "Explosive",
+  "primary": "rocket_launcher",
+  "passive": "demolition",
+  "specializations": ["breaching"]
+}

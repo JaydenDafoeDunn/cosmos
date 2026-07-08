@@ -1,0 +1,8 @@
+{
+  "id": "breaching",
+  "name": "Breaching Charge",
+  "targeting": "point",
+  "range": 26,
+  "cooldown": 5.0,
+  "effects": [{ "op": "AreaDamage", "target": "point", "amount": 70, "radius": 5 }]
+}

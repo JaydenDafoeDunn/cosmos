@@ -1,0 +1,10 @@
+{
+  "id": "shock",
+  "code": 1,
+  "name": "Shock",
+  "effect": "damage_over_time",
+  "amount": 8,
+  "targets": "enemy",
+  "destructible": true,
+  "health": 40
+}
