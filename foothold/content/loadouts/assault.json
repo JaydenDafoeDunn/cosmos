@@ -1,0 +1,7 @@
+{
+  "id": "assault",
+  "name": "Assault",
+  "primary": "shoot",
+  "signature": "grenade",
+  "passive": "sprint"
+}

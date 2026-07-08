@@ -1,0 +1,11 @@
+{
+  "id": "team_deathmatch",
+  "name": "Team Deathmatch",
+  "teams": 2,
+  "starting_tokens": 0,
+  "win": { "type": "score", "threshold": 75 },
+  "respawn": { "mode": "instant" },
+  "rules": {
+    "painting.enabled": false
+  }
+}

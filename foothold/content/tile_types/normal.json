@@ -1,0 +1,6 @@
+{
+  "id": "normal",
+  "name": "Normal",
+  "effect": "none",
+  "destructible": false
+}

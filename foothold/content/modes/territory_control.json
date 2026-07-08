@@ -1,0 +1,14 @@
+{
+  "id": "territory_control",
+  "name": "Territory Control",
+  "teams": 2,
+  "starting_tokens": 60,
+  "win": { "type": "territory", "threshold": 0.6 },
+  "respawn": { "mode": "timer", "delay": 5 },
+  "rules": {
+    "painting.enabled": true,
+    "painting.enemy_tiles": true,
+    "painting.cost_neutral": 1,
+    "painting.cost_enemy": 2
+  }
+}

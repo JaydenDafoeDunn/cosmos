@@ -1,0 +1,10 @@
+{
+  "id": "paint",
+  "name": "Paint Tile",
+  "targeting": "tile",
+  "range": 8,
+  "cooldown": 0.15,
+  "cost": { "tokens_neutral": 1, "tokens_enemy": 2 },
+  "requirements": [{ "type": "pool_at_least", "amount": 1 }],
+  "effects": [{ "op": "SetTileOwner", "target": "tile", "team": "caster" }]
+}
