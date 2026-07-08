@@ -1,7 +1,0 @@
-{
-  "id": "wizard",
-  "name": "Wizard",
-  "primary": "energy_beam",
-  "passive": "improved_token_efficiency",
-  "specializations": ["area_blast"]
-}

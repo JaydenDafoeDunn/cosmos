@@ -1,8 +1,0 @@
-{
-  "id": "smg",
-  "name": "SMG",
-  "targeting": "direction",
-  "range": 40,
-  "cooldown": 0.07,
-  "effects": [{ "op": "Damage", "target": "hitscan", "amount": 11, "falloff": true }]
-}

@@ -1,7 +1,0 @@
-{
-  "id": "painter",
-  "name": "Painter",
-  "primary": "smg",
-  "passive": "faster_painting",
-  "specializations": ["paint"]
-}
